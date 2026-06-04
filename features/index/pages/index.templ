@@ -1,0 +1,23 @@
+package pages
+
+import "datastar-go/web/resources"
+import "fmt"
+
+templ Counter(count int) {
+	<div id="counter">{ fmt.Sprintf("Count: %d", count) }</div>
+}
+
+templ IndexPage(count int, dbTime string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<title>Datastar Demo</title>
+			<script type="module" src={ resources.StaticPath("datastar/datastar.js") }></script>
+		</head>
+		<body>
+			@Counter(count)
+			<button data-on:click="@get('/increment')">Increment</button>
+			<p>DB time: { dbTime }</p>
+		</body>
+	</html>
+}

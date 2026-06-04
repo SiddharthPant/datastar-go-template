@@ -1,0 +1,65 @@
+version: "3"
+
+dotenv: [".env"]            # loads DATABASE_URL et al. into task envs
+
+tasks:
+  dev:
+    desc: Run the web server with dev build tag + hot reload
+    deps: [templ]
+    cmds:
+      - go run -tags dev ./cmd/web
+
+  run:
+    desc: Run the web server (prod build)
+    deps: [templ]
+    cmds:
+      - go run ./cmd/web
+
+  templ:
+    desc: Generate Go from .templ files
+    cmds:
+      - go tool templ generate
+
+  templ:watch:
+    desc: Watch .templ files and regenerate on change
+    cmds:
+      - go tool templ generate --watch
+
+  gen:
+    desc: Run all code generation (sqlc + templ)
+    deps: [sqlc:generate, templ]
+
+  sqlc:generate:
+    desc: Regenerate database/sqlc from queries + migrations
+    cmds:
+      - go tool sqlc generate
+
+  sqlc:vet:
+    desc: Lint + prepare-check every query against the managed PG
+    cmds:
+      - go tool sqlc vet
+
+  sqlc:diff:
+    desc: Fail if committed database/sqlc is stale vs. queries
+    cmds:
+      - go tool sqlc diff
+
+  db:migrate:
+    desc: Apply migrations to local DB
+    cmds:
+      - go tool goose -dir database/migrations postgres "$DATABASE_URL" up
+
+  db:rollback:
+    desc: Roll back the last migration
+    cmds:
+      - go tool goose -dir database/migrations postgres "$DATABASE_URL" down
+
+  db:status:
+    desc: Show migration status
+    cmds:
+      - go tool goose -dir database/migrations postgres "$DATABASE_URL" status
+
+  db:new:
+    desc: 'Scaffold a migration: task db:new -- add_posts'
+    cmds:
+      - go tool goose -dir database/migrations create {{.CLI_ARGS}} sql
