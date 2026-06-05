@@ -7,7 +7,7 @@ templ Counter(count int) {
 	<div id="counter">{ fmt.Sprintf("Count: %d", count) }</div>
 }
 
-templ NatsPing(message string) {
+templ NATSPing(message string) {
 	<p id="nats-ping">NATS ping: { message }</p>
 }
 
@@ -26,9 +26,9 @@ templ IndexPage(count int, dbTime string, natsPing string, jobsCount uint64) {
 			@Counter(count)
 			<button data-on:click="@get('/increment')">Increment</button>
 			<p>DB time: { dbTime }</p>
-			@NatsPing(natsPing)
+			@NATSPing(natsPing)
 			@JobsCount(jobsCount)
-			<button data-on:click="@get('/nats/ping')">Ping Nats</button>
+			<button data-on:click="@get('/nats/ping')">Ping NATS</button>
 			<button data-on:click="@post('/jobs/demo')">Publish Job</button>
 		</body>
 	</html>

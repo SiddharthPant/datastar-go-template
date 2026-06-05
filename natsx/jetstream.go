@@ -14,7 +14,7 @@ const (
 )
 
 func (c *Client) EnsureStreams(ctx context.Context) error {
-	_, err := c.Js.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
+	_, err := c.JetStream.CreateOrUpdateStream(ctx, jetstream.StreamConfig{
 		Name:      DemoJobsStream,
 		Subjects:  []string{DemoJobsSubject},
 		Storage:   jetstream.FileStorage,
@@ -29,7 +29,7 @@ func (c *Client) EnsureStreams(ctx context.Context) error {
 }
 
 func (c *Client) DemoJobsCount(ctx context.Context) (uint64, error) {
-	stream, err := c.Js.Stream(ctx, DemoJobsStream)
+	stream, err := c.JetStream.Stream(ctx, DemoJobsStream)
 	if err != nil {
 		return 0, fmt.Errorf("get demo jobs stream: %w", err)
 	}

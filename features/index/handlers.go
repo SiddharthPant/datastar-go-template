@@ -19,7 +19,7 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) Index(w http.ResponseWriter, r *http.Request) {
-	dbTime, err := h.service.DbTime(r.Context())
+	dbTime, err := h.service.DBTime(r.Context())
 	if err != nil {
 		slog.Error("health query failed", "error", err)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
@@ -46,8 +46,8 @@ func (h *Handler) Increment(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) PingNats(w http.ResponseWriter, r *http.Request) {
-	message, err := h.service.PingNats(r.Context())
+func (h *Handler) PingNATS(w http.ResponseWriter, r *http.Request) {
+	message, err := h.service.PingNATS(r.Context())
 	if err != nil {
 		slog.Error("nats ping failed", "error", err)
 		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
@@ -55,7 +55,7 @@ func (h *Handler) PingNats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sse := datastar.NewSSE(w, r)
-	if err := sse.PatchElementTempl(pages.NatsPing(message)); err != nil {
+	if err := sse.PatchElementTempl(pages.NATSPing(message)); err != nil {
 		slog.Error("failed to patch nats ping", "error", err)
 	}
 }

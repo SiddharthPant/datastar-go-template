@@ -13,10 +13,10 @@ func New(ctx context.Context) (*pgxpool.Pool, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse db url: %w", err)
 	}
-	poolCfg.MaxConns = int32(config.Global.DbMaxConns)
-	poolCfg.MinConns = int32(config.Global.DbMinConns)
-	poolCfg.MaxConnIdleTime = config.Global.DbIdleTimeout
-	poolCfg.ConnConfig.ConnectTimeout = config.Global.DbConnectTimeout
+	poolCfg.MaxConns = int32(config.Global.DBMaxConns)
+	poolCfg.MinConns = int32(config.Global.DBMinConns)
+	poolCfg.MaxConnIdleTime = config.Global.DBIdleTimeout
+	poolCfg.ConnConfig.ConnectTimeout = config.Global.DBConnectTimeout
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

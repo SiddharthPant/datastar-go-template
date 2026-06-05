@@ -11,14 +11,14 @@ import (
 )
 
 type Client struct {
-	Conn *nats.Conn
-	Js   jetstream.JetStream
+	Conn      *nats.Conn
+	JetStream jetstream.JetStream
 }
 
 func New(ctx context.Context) (*Client, error) {
 	opts := []nats.Option{
-		nats.Name(config.Global.NatsName),
-		nats.Timeout(config.Global.NatsConnectTimeout),
+		nats.Name(config.Global.NATSName),
+		nats.Timeout(config.Global.NATSConnectTimeout),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			slog.Warn("nats disconnected", "error", err)
 		}),
@@ -30,7 +30,7 @@ func New(ctx context.Context) (*Client, error) {
 		}),
 	}
 
-	nc, err := nats.Connect(config.Global.NatsUrl, opts...)
+	nc, err := nats.Connect(config.Global.NATSURL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("connect nats: %w", err)
 	}
@@ -49,10 +49,11 @@ func New(ctx context.Context) (*Client, error) {
 	}
 
 	return &Client{
-		Conn: nc,
-		Js:   js,
+		Conn:      nc,
+		JetStream: js,
 	}, nil
 }
+
 func (c *Client) Close() {
 	if c == nil || c.Conn == nil {
 		return

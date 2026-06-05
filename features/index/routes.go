@@ -19,7 +19,7 @@ func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool, natsC
 
 	router.Get("/", handler.Index)
 	router.Get("/increment", handler.Increment)
-	router.Get("/nats/ping", handler.PingNats)
+	router.Get("/nats/ping", handler.PingNATS)
 	router.Post("/jobs/demo", handler.PublishDemoJob)
 
 	return nil

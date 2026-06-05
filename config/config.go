@@ -26,14 +26,14 @@ type Config struct {
 	SessionSecret string
 
 	DatabaseURL      string
-	DbMaxConns       int
-	DbMinConns       int
-	DbConnectTimeout time.Duration
-	DbIdleTimeout    time.Duration
+	DBMaxConns       int
+	DBMinConns       int
+	DBConnectTimeout time.Duration
+	DBIdleTimeout    time.Duration
 
-	NatsUrl            string
-	NatsName           string
-	NatsConnectTimeout time.Duration
+	NATSURL            string
+	NATSName           string
+	NATSConnectTimeout time.Duration
 }
 
 var (
@@ -101,13 +101,13 @@ func loadBase() *Config {
 		SessionSecret: getEnv("SESSION_SECRET", "session-secret"),
 
 		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/app_db"),
-		DbMaxConns:       getEnvInt("DATABASE_MAX_CONNECTIONS", 10),
-		DbMinConns:       getEnvInt("DATABASE_MIN_CONNECTIONS", 0),
-		DbConnectTimeout: getEnvDuration("DATABASE_CONNECT_TIMEOUT", 5*time.Second),
-		DbIdleTimeout:    getEnvDuration("DATABASE_IDLE_TIMEOUT", 30*time.Second),
+		DBMaxConns:       getEnvInt("DATABASE_MAX_CONNECTIONS", 10),
+		DBMinConns:       getEnvInt("DATABASE_MIN_CONNECTIONS", 0),
+		DBConnectTimeout: getEnvDuration("DATABASE_CONNECT_TIMEOUT", 5*time.Second),
+		DBIdleTimeout:    getEnvDuration("DATABASE_IDLE_TIMEOUT", 30*time.Second),
 
-		NatsUrl:            getEnv("NATS_URL", "nats://localhost:4222"),
-		NatsName:           getEnv("NATS_NAME", "datastar-go"),
-		NatsConnectTimeout: getEnvDuration("NATS_CONNECT_TIMEOUT", 5*time.Second),
+		NATSURL:            getEnv("NATS_URL", "nats://localhost:4222"),
+		NATSName:           getEnv("NATS_NAME", "datastar-go"),
+		NATSConnectTimeout: getEnvDuration("NATS_CONNECT_TIMEOUT", 5*time.Second),
 	}
 }

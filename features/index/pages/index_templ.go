@@ -53,7 +53,7 @@ func Counter(count int) templ.Component {
 	})
 }
 
-func NatsPing(message string) templ.Component {
+func NATSPing(message string) templ.Component {
 	return templruntime.GeneratedTemplate(func(templ_7745c5c3_Input templruntime.GeneratedComponentInput) (templ_7745c5c3_Err error) {
 		templ_7745c5c3_W, ctx := templ_7745c5c3_Input.Writer, templ_7745c5c3_Input.Context
 		if templ_7745c5c3_CtxErr := ctx.Err(); templ_7745c5c3_CtxErr != nil {
@@ -196,7 +196,7 @@ func IndexPage(count int, dbTime string, natsPing string, jobsCount uint64) temp
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = NatsPing(natsPing).Render(ctx, templ_7745c5c3_Buffer)
+		templ_7745c5c3_Err = NATSPing(natsPing).Render(ctx, templ_7745c5c3_Buffer)
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -204,7 +204,7 @@ func IndexPage(count int, dbTime string, natsPing string, jobsCount uint64) temp
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<button data-on:click=\"@get('/nats/ping')\">Ping Nats</button> <button data-on:click=\"@post('/jobs/demo')\">Publish Job</button></body></html>")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 11, "<button data-on:click=\"@get('/nats/ping')\">Ping NATS</button> <button data-on:click=\"@post('/jobs/demo')\">Publish Job</button></body></html>")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}

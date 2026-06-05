@@ -55,7 +55,7 @@ func (s *Service) Setup(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) DbTime(ctx context.Context) (string, error) {
+func (s *Service) DBTime(ctx context.Context) (string, error) {
 	dbTime, err := s.queries.HealthCheck(ctx)
 	if err != nil {
 		return "", fmt.Errorf("health query: %w", err)
@@ -64,10 +64,10 @@ func (s *Service) DbTime(ctx context.Context) (string, error) {
 	return dbTime, nil
 }
 
-func (s *Service) PingNats(ctx context.Context) (string, error) {
+func (s *Service) PingNATS(ctx context.Context) (string, error) {
 	msg, err := s.natsClient.Conn.RequestWithContext(ctx, demoPingSubject, []byte("ping"))
 	if err != nil {
-		return "", fmt.Errorf("request nate ping: %w", err)
+		return "", fmt.Errorf("request nats ping: %w", err)
 	}
 
 	return string(msg.Data), nil
@@ -89,7 +89,7 @@ func (s *Service) PublishDemoJob(ctx context.Context) (uint64, error) {
 		return 0, fmt.Errorf("encode demo job: %w", err)
 	}
 
-	_, err = s.natsClient.Js.Publish(
+	_, err = s.natsClient.JetStream.Publish(
 		ctx,
 		natsx.DemoJobsSubject,
 		payload,
