@@ -3,6 +3,7 @@ package router
 import (
 	"context"
 	"datastar-go/config"
+	"datastar-go/natsx"
 	"datastar-go/web/resources"
 	"errors"
 	"fmt"
@@ -17,14 +18,14 @@ import (
 	"github.com/starfederation/datastar-go/datastar"
 )
 
-func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool) (err error) {
+func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool, natsClient *natsx.Client) (err error) {
 	if config.Global.Environment == config.Dev {
 		setupReload(router)
 	}
 	router.Handle("/static/*", resources.Handler())
 
 	if err := errors.Join(
-		indexFeature.SetupRoutes(router, db),
+		indexFeature.SetupRoutes(ctx, router, db, natsClient),
 	); err != nil {
 		return fmt.Errorf("error setting up routes: %w", err)
 	}

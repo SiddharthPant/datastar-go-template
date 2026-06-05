@@ -1,42 +1,26 @@
 package index
 
 import (
-	"datastar-go/database/sqlc"
-	"datastar-go/features/index/pages"
-	"log/slog"
-	"net/http"
+	"context"
+	"datastar-go/natsx"
+	"fmt"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/starfederation/datastar-go/datastar"
 )
 
-var count int
+func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool, natsClient *natsx.Client) error {
+	service := NewService(db, natsClient)
+	if err := service.Setup(ctx); err != nil {
+		return fmt.Errorf("setup index service: %w", err)
+	}
 
-func SetupRoutes(router chi.Router, db *pgxpool.Pool) error {
-	queries := sqlc.New(db)
+	handler := NewHandler(service)
 
-	router.Get("/", func(w http.ResponseWriter, r *http.Request) {
-		dbTime, err := queries.HealthCheck(r.Context())
-		if err != nil {
-			slog.Error("health query failed", "error", err)
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-			return
-		}
-		if err := pages.IndexPage(count, dbTime).Render(r.Context(), w); err != nil {
-			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
-		}
-	})
-
-	router.Get("/increment", func(w http.ResponseWriter, r *http.Request) {
-		count++
-		sse := datastar.NewSSE(w, r)
-		err := sse.PatchElementTempl(pages.Counter(count))
-		if err != nil {
-			slog.Error("failed to patch counter element", "error", err)
-			return
-		}
-	})
+	router.Get("/", handler.Index)
+	router.Get("/increment", handler.Increment)
+	router.Get("/nats/ping", handler.PingNats)
+	router.Post("/jobs/demo", handler.PublishDemoJob)
 
 	return nil
 }

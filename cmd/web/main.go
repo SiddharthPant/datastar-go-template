@@ -13,6 +13,7 @@ import (
 
 	"datastar-go/config"
 	"datastar-go/database"
+	"datastar-go/natsx"
 	"datastar-go/router"
 
 	"github.com/go-chi/chi/v5"
@@ -44,6 +45,16 @@ func run(ctx context.Context) error {
 	}
 	defer db.Close()
 
+	natsClient, err := natsx.New(ctx)
+	if err != nil {
+		return fmt.Errorf("connect nats: %w", err)
+	}
+	defer natsClient.Close()
+
+	if err := natsClient.EnsureStreams(ctx); err != nil {
+		return fmt.Errorf("ensure nats streams: %w", err)
+	}
+
 	r := chi.NewMux()
 	r.Use(
 		httplog.RequestLogger(logger, nil),
@@ -52,7 +63,7 @@ func run(ctx context.Context) error {
 
 	eg, egctx := errgroup.WithContext(ctx)
 
-	if err := router.SetupRoutes(egctx, r, db); err != nil {
+	if err := router.SetupRoutes(egctx, r, db, natsClient); err != nil {
 		return fmt.Errorf("error setting up routes: %w", err)
 	}
 
