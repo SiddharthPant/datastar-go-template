@@ -19,7 +19,7 @@ import (
 )
 
 func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool, natsClient *natsx.Client) (err error) {
-	if config.Env.AppEnv == config.Local {
+	if config.Env.AppEnv == config.Dev {
 		setupReload(router)
 	}
 	router.Handle("/static/*", resources.Handler())

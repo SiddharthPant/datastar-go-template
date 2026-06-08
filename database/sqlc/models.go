@@ -9,8 +9,88 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type User struct {
+type EmailOtpCredential struct {
+	ID          uuid.UUID          `db:"id" json:"id"`
+	Pid         string             `db:"pid" json:"pid"`
+	PrincipalID uuid.UUID          `db:"principal_id" json:"principalId"`
+	Email       string             `db:"email" json:"email"`
+	VerifiedAt  pgtype.Timestamptz `db:"verified_at" json:"verifiedAt"`
+	DisabledAt  pgtype.Timestamptz `db:"disabled_at" json:"disabledAt"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type Membership struct {
+	ID          uuid.UUID          `db:"id" json:"id"`
+	Pid         string             `db:"pid" json:"pid"`
+	ScopeID     uuid.UUID          `db:"scope_id" json:"scopeId"`
+	PrincipalID uuid.UUID          `db:"principal_id" json:"principalId"`
+	Role        interface{}        `db:"role" json:"role"`
+	JoinedAt    pgtype.Timestamptz `db:"joined_at" json:"joinedAt"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type Org struct {
 	ID        uuid.UUID          `db:"id" json:"id"`
-	Email     string             `db:"email" json:"email"`
+	Pid       string             `db:"pid" json:"pid"`
+	ScopeID   uuid.UUID          `db:"scope_id" json:"scopeId"`
+	Name      string             `db:"name" json:"name"`
+	Slug      string             `db:"slug" json:"slug"`
 	CreatedAt pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type PasswordCredential struct {
+	ID                uuid.UUID          `db:"id" json:"id"`
+	Pid               string             `db:"pid" json:"pid"`
+	PrincipalID       uuid.UUID          `db:"principal_id" json:"principalId"`
+	Email             string             `db:"email" json:"email"`
+	PasswordHash      string             `db:"password_hash" json:"passwordHash"`
+	PasswordUpdatedAt pgtype.Timestamptz `db:"password_updated_at" json:"passwordUpdatedAt"`
+	DisabledAt        pgtype.Timestamptz `db:"disabled_at" json:"disabledAt"`
+	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt         pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type Principal struct {
+	ID                uuid.UUID          `db:"id" json:"id"`
+	Pid               string             `db:"pid" json:"pid"`
+	Kind              interface{}        `db:"kind" json:"kind"`
+	DisabledAt        pgtype.Timestamptz `db:"disabled_at" json:"disabledAt"`
+	AuthInvalidatedAt pgtype.Timestamptz `db:"auth_invalidated_at" json:"authInvalidatedAt"`
+	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt         pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type Scope struct {
+	ID        uuid.UUID          `db:"id" json:"id"`
+	Pid       string             `db:"pid" json:"pid"`
+	Kind      interface{}        `db:"kind" json:"kind"`
+	ParentID  uuid.NullUUID      `db:"parent_id" json:"parentId"`
+	CreatedAt pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type Team struct {
+	ID           uuid.UUID          `db:"id" json:"id"`
+	Pid          string             `db:"pid" json:"pid"`
+	ScopeID      uuid.UUID          `db:"scope_id" json:"scopeId"`
+	OrgID        uuid.UUID          `db:"org_id" json:"orgId"`
+	ParentTeamID uuid.NullUUID      `db:"parent_team_id" json:"parentTeamId"`
+	Name         string             `db:"name" json:"name"`
+	Slug         string             `db:"slug" json:"slug"`
+	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+}
+
+type User struct {
+	ID          uuid.UUID          `db:"id" json:"id"`
+	Pid         string             `db:"pid" json:"pid"`
+	PrincipalID uuid.UUID          `db:"principal_id" json:"principalId"`
+	Email       string             `db:"email" json:"email"`
+	Name        string             `db:"name" json:"name"`
+	IsStaff     bool               `db:"is_staff" json:"isStaff"`
+	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
 }

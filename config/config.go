@@ -13,6 +13,8 @@ type Config struct {
 	Port          string
 	LogLevel      slog.Level
 	SessionSecret string
+	AppBaseURL    string
+	SeedPassword  string
 
 	DatabaseURL      string
 	DBMaxConns       int
@@ -23,6 +25,9 @@ type Config struct {
 	NATSURL            string
 	NATSName           string
 	NATSConnectTimeout time.Duration
+
+	SMTPAddr string
+	SMTPFrom string
 }
 
 var (
@@ -45,6 +50,8 @@ func load() *Config {
 		Port:          env.string("PORT", "", true),
 		LogLevel:      env.slogLevel("LOG_LEVEL", slog.LevelInfo, false),
 		SessionSecret: env.string("SESSION_SECRET", "", true),
+		AppBaseURL:    env.string("APP_BASE_URL", "", true),
+		SeedPassword:  env.string("SEED_PASSWORD", "", true),
 
 		DatabaseURL:      env.string("DATABASE_URL", "", true),
 		DBMaxConns:       env.int("DATABASE_MAX_CONNECTIONS", 10, false),
@@ -55,6 +62,9 @@ func load() *Config {
 		NATSURL:            env.string("NATS_URL", "", true),
 		NATSName:           env.string("NATS_NAME", "datastar-go", true),
 		NATSConnectTimeout: env.duration("NATS_CONNECT_TIMEOUT", 5*time.Second, true),
+
+		SMTPAddr: env.string("SMTP_ADDR", "", true),
+		SMTPFrom: env.string("SMTP_FROM", "", true),
 	}
 	if err := env.err(); err != nil {
 		slog.Error("failed to load config", "error", err)

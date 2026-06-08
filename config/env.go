@@ -12,8 +12,8 @@ import (
 type Environment string
 
 const (
-	Local  Environment = "local"
-	Server Environment = "server"
+	Dev  Environment = "dev"
+	Prod Environment = "prod"
 )
 
 type EnvLoader struct {

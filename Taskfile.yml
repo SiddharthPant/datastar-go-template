@@ -63,3 +63,8 @@ tasks:
     desc: 'Scaffold a migration: task db:new -- add_posts'
     cmds:
       - go tool goose -dir database/migrations create {{.CLI_ARGS}} sql
+
+  db:seed:
+    desc: Seed local org/team/user data
+    cmds:
+      - go run ./cmd/seed
