@@ -2,24 +2,12 @@ package config
 
 import (
 	"log/slog"
-	"os"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
-
-	"github.com/joho/godotenv"
-)
-
-type Environment string
-
-const (
-	Dev  Environment = "dev"
-	Prod Environment = "prod"
 )
 
 type Config struct {
-	Environment   Environment
+	AppEnv        Environment
 	Host          string
 	Port          string
 	LogLevel      slog.Level
@@ -37,77 +25,34 @@ type Config struct {
 }
 
 var (
-	Global *Config
-	once   sync.Once
+	Env  *Config
+	once sync.Once
 )
 
 func init() {
 	once.Do(func() {
-		Global = Load()
+		Env = load()
 	})
 }
 
-func getEnv(key, fallback string) string {
-	if val, ok := os.LookupEnv(key); ok {
-		return val
-	}
-	return fallback
-}
-
-func getEnvInt(key string, fallback int) int {
-	if v, ok := os.LookupEnv(key); ok {
-		if n, err := strconv.Atoi(v); err == nil {
-			return n
-		}
-	}
-
-	return fallback
-}
-
-func getEnvDuration(key string, fallback time.Duration) time.Duration {
-	if v, ok := os.LookupEnv(key); ok {
-		if d, err := time.ParseDuration(strings.ReplaceAll(v, " ", "")); err == nil {
-			return d
-		}
-	}
-
-	return fallback
-}
-
-func loadBase() *Config {
-	err := godotenv.Load()
-	if err != nil {
-		slog.Error("failed to load .env file", "error", err)
-		return nil
-	}
+func load() *Config {
+	env := &EnvLoader{}
 
 	return &Config{
-		Host: getEnv("HOST", "0.0.0.0"),
-		Port: getEnv("PORT", "8080"),
-		LogLevel: func() slog.Level {
-			switch os.Getenv("LOG_LEVEL") {
-			case "DEBUG":
-				return slog.LevelDebug
-			case "INFO":
-				return slog.LevelInfo
-			case "WARN":
-				return slog.LevelWarn
-			case "ERROR":
-				return slog.LevelError
-			default:
-				return slog.LevelInfo
-			}
-		}(),
-		SessionSecret: getEnv("SESSION_SECRET", "session-secret"),
+		AppEnv:        env.appEnv("APP_ENV", "", true),
+		Host:          env.string("HOST", "", false),
+		Port:          env.string("PORT", "", false),
+		LogLevel:      env.slogLevel("LOG_LEVEL", slog.LevelInfo, false),
+		SessionSecret: env.string("SESSION_SECRET", "", true),
 
-		DatabaseURL:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/app_db"),
-		DBMaxConns:       getEnvInt("DATABASE_MAX_CONNECTIONS", 10),
-		DBMinConns:       getEnvInt("DATABASE_MIN_CONNECTIONS", 0),
-		DBConnectTimeout: getEnvDuration("DATABASE_CONNECT_TIMEOUT", 5*time.Second),
-		DBIdleTimeout:    getEnvDuration("DATABASE_IDLE_TIMEOUT", 30*time.Second),
+		DatabaseURL:      env.string("DATABASE_URL", "", true),
+		DBMaxConns:       env.int("DATABASE_MAX_CONNECTIONS", 10, false),
+		DBMinConns:       env.int("DATABASE_MIN_CONNECTIONS", 0, false),
+		DBConnectTimeout: env.duration("DATABASE_CONNECT_TIMEOUT", 5*time.Second, false),
+		DBIdleTimeout:    env.duration("DATABASE_IDLE_TIMEOUT", 30*time.Second, false),
 
-		NATSURL:            getEnv("NATS_URL", "nats://localhost:4222"),
-		NATSName:           getEnv("NATS_NAME", "datastar-go"),
-		NATSConnectTimeout: getEnvDuration("NATS_CONNECT_TIMEOUT", 5*time.Second),
+		NATSURL:            env.string("NATS_URL", "", true),
+		NATSName:           env.string("NATS_NAME", "datastar-go", true),
+		NATSConnectTimeout: env.duration("NATS_CONNECT_TIMEOUT", 5*time.Second, true),
 	}
 }

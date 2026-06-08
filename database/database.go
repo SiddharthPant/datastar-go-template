@@ -9,14 +9,14 @@ import (
 )
 
 func New(ctx context.Context) (*pgxpool.Pool, error) {
-	poolCfg, err := pgxpool.ParseConfig(config.Global.DatabaseURL)
+	poolCfg, err := pgxpool.ParseConfig(config.Env.DatabaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse db url: %w", err)
 	}
-	poolCfg.MaxConns = int32(config.Global.DBMaxConns)
-	poolCfg.MinConns = int32(config.Global.DBMinConns)
-	poolCfg.MaxConnIdleTime = config.Global.DBIdleTimeout
-	poolCfg.ConnConfig.ConnectTimeout = config.Global.DBConnectTimeout
+	poolCfg.MaxConns = int32(config.Env.DBMaxConns)
+	poolCfg.MinConns = int32(config.Env.DBMinConns)
+	poolCfg.MaxConnIdleTime = config.Env.DBIdleTimeout
+	poolCfg.ConnConfig.ConnectTimeout = config.Env.DBConnectTimeout
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {

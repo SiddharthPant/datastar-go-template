@@ -33,7 +33,7 @@ func run(args []string) error {
 		return fmt.Errorf("usage: migrate [up|down|status]")
 	}
 
-	db, err := sql.Open("pgx", config.Global.DatabaseURL)
+	db, err := sql.Open("pgx", config.Env.DatabaseURL)
 	if err != nil {
 		return fmt.Errorf("open database: %w", err)
 	}

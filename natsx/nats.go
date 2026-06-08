@@ -17,8 +17,8 @@ type Client struct {
 
 func New(ctx context.Context) (*Client, error) {
 	opts := []nats.Option{
-		nats.Name(config.Global.NATSName),
-		nats.Timeout(config.Global.NATSConnectTimeout),
+		nats.Name(config.Env.NATSName),
+		nats.Timeout(config.Env.NATSConnectTimeout),
 		nats.DisconnectErrHandler(func(nc *nats.Conn, err error) {
 			slog.Warn("nats disconnected", "error", err)
 		}),
@@ -30,7 +30,7 @@ func New(ctx context.Context) (*Client, error) {
 		}),
 	}
 
-	nc, err := nats.Connect(config.Global.NATSURL, opts...)
+	nc, err := nats.Connect(config.Env.NATSURL, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("connect nats: %w", err)
 	}

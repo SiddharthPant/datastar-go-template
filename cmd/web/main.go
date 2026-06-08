@@ -35,7 +35,7 @@ func run(ctx context.Context) error {
 	defer cancel()
 
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-		Level: config.Global.LogLevel,
+		Level: config.Env.LogLevel,
 	}))
 	slog.SetDefault(logger)
 
@@ -67,7 +67,7 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("error setting up routes: %w", err)
 	}
 
-	addr := fmt.Sprintf("%s:%s", config.Global.Host, config.Global.Port)
+	addr := fmt.Sprintf("%s:%s", config.Env.Host, config.Env.Port)
 
 	srv := &http.Server{
 		Addr:    addr,

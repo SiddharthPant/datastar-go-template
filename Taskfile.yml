@@ -4,13 +4,13 @@ dotenv: [".env"]            # loads DATABASE_URL et al. into task envs
 
 tasks:
   dev:
-    desc: Run the web server with dev build tag + hot reload
+    desc: Run the web server with local build tag + hot reload
     deps: [templ]
     cmds:
-      - go run -tags dev ./cmd/web
+      - go run -tags local ./cmd/web
 
   run:
-    desc: Run the web server (prod build)
+    desc: Run the web server (server build)
     deps: [templ]
     cmds:
       - go run ./cmd/web
