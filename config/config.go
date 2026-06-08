@@ -2,6 +2,7 @@ package config
 
 import (
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 )
@@ -38,10 +39,10 @@ func init() {
 func load() *Config {
 	env := &EnvLoader{}
 
-	return &Config{
+	config := &Config{
 		AppEnv:        env.appEnv("APP_ENV", "", true),
-		Host:          env.string("HOST", "", false),
-		Port:          env.string("PORT", "", false),
+		Host:          env.string("HOST", "", true),
+		Port:          env.string("PORT", "", true),
 		LogLevel:      env.slogLevel("LOG_LEVEL", slog.LevelInfo, false),
 		SessionSecret: env.string("SESSION_SECRET", "", true),
 
@@ -55,4 +56,9 @@ func load() *Config {
 		NATSName:           env.string("NATS_NAME", "datastar-go", true),
 		NATSConnectTimeout: env.duration("NATS_CONNECT_TIMEOUT", 5*time.Second, true),
 	}
+	if err := env.err(); err != nil {
+		slog.Error("failed to load config", "error", err)
+		os.Exit(1)
+	}
+	return config
 }
