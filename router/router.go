@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"sync"
 
+	authFeature "datastar-go/features/auth"
 	indexFeature "datastar-go/features/index"
 
 	"github.com/go-chi/chi/v5"
@@ -25,6 +26,7 @@ func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool, natsC
 	router.Handle("/static/*", resources.Handler())
 
 	if err := errors.Join(
+		authFeature.SetupRoutes(ctx, router, db),
 		indexFeature.SetupRoutes(ctx, router, db, natsClient),
 	); err != nil {
 		return fmt.Errorf("error setting up routes: %w", err)

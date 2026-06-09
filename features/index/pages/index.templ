@@ -1,6 +1,6 @@
 package pages
 
-import "datastar-go/web/resources"
+import "datastar-go/features/common/layouts"
 import "fmt"
 
 templ Counter(count int) {
@@ -16,20 +16,13 @@ templ JobsCount(count uint64) {
 }
 
 templ IndexPage(count int, dbTime string, natsPing string, jobsCount uint64) {
-	<!DOCTYPE html>
-	<html lang="en">
-		<head>
-			<title>Datastar Demo</title>
-			<script type="module" src={ resources.StaticPath("datastar/datastar.js") }></script>
-		</head>
-		<body>
-			@Counter(count)
-			<button data-on:click="@get('/increment')">Increment</button>
-			<p>DB time: { dbTime }</p>
-			@NATSPing(natsPing)
-			@JobsCount(jobsCount)
-			<button data-on:click="@get('/nats/ping')">Ping NATS</button>
-			<button data-on:click="@post('/jobs/demo')">Publish Job</button>
-		</body>
-	</html>
+	@layouts.BaseLayout("Datastar Demo") {
+		@Counter(count)
+		<button data-on:click="@get('/increment')">Increment</button>
+		<p>DB time: { dbTime }</p>
+		@NATSPing(natsPing)
+		@JobsCount(jobsCount)
+		<button data-on:click="@get('/nats/ping')">Ping NATS</button>
+		<button data-on:click="@post('/jobs/demo')">Publish Job</button>
+	}
 }
