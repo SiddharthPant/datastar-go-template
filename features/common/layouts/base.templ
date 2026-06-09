@@ -1,0 +1,25 @@
+package layouts
+
+import "datastar-go/web/resources"
+import "datastar-go/config"
+
+templ BaseLayout(title string) {
+	<!DOCTYPE html>
+	<html lang="en">
+		<head>
+			<title>{ title }</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0">
+            <script defer type="module" src={ resources.StaticPath("datastar/datastar.js") }></script>
+		</head>
+		<body>
+            if config.Env.AppEnv == config.Dev {
+                <div data-init="@get('/reload', {retryMaxCount: 1000, retryInterval:20, retryMaxWaitMs:200})"></div>
+            }
+			<nav>
+				<a href="/">Home</a>
+				<a href="/auth/login">Login</a>
+			</nav>
+			{ children... }
+		</body>
+	</html>
+}

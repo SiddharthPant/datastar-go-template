@@ -6,32 +6,10 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/google/uuid"
 )
 
 type Querier interface {
-	CreateOrgScopeForSeed(ctx context.Context) (Scope, error)
-	CreatePrincipal(ctx context.Context, kind interface{}) (Principal, error)
-	CreateTeamScopeForSeed(ctx context.Context, parentID uuid.NullUUID) (Scope, error)
-	GetOTPCredentialByEmail(ctx context.Context, email string) (GetOTPCredentialByEmailRow, error)
-	GetOrgBySlug(ctx context.Context, slug string) (Org, error)
-	GetPasswordCredentialByEmail(ctx context.Context, email string) (GetPasswordCredentialByEmailRow, error)
-	GetPrincipalAuthState(ctx context.Context, id uuid.UUID) (GetPrincipalAuthStateRow, error)
-	GetPrincipalByUserEmail(ctx context.Context, email string) (Principal, error)
-	GetTeamByOrgAndSlug(ctx context.Context, arg GetTeamByOrgAndSlugParams) (Team, error)
-	GetUserByEmail(ctx context.Context, email string) (User, error)
-	GetUserByPrincipalID(ctx context.Context, principalID uuid.UUID) (User, error)
 	HealthCheck(ctx context.Context) (string, error)
-	ListMembershipsForPrincipal(ctx context.Context, principalID uuid.UUID) ([]ListMembershipsForPrincipalRow, error)
-	TouchPrincipalAuthInvalidatedAt(ctx context.Context, id uuid.UUID) error
-	UpdatePasswordCredentialHash(ctx context.Context, arg UpdatePasswordCredentialHashParams) error
-	UpsertMembershipForSeed(ctx context.Context, arg UpsertMembershipForSeedParams) (Membership, error)
-	UpsertOTPCredentialForSeed(ctx context.Context, arg UpsertOTPCredentialForSeedParams) (EmailOtpCredential, error)
-	UpsertOrgForSeed(ctx context.Context, arg UpsertOrgForSeedParams) (Org, error)
-	UpsertPasswordCredentialForSeed(ctx context.Context, arg UpsertPasswordCredentialForSeedParams) (PasswordCredential, error)
-	UpsertTeamForSeed(ctx context.Context, arg UpsertTeamForSeedParams) (Team, error)
-	UpsertUserForSeed(ctx context.Context, arg UpsertUserForSeedParams) (User, error)
 }
 
 var _ Querier = (*Queries)(nil)
