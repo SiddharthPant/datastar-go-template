@@ -10,6 +10,30 @@ Use these docs in order:
 3. [Auth Feature And Routing Code](10-implementation-code-feature.md)
 4. [Seeders And Tests Code](11-implementation-code-seeders-tests.md)
 
+## Current State (2026-06-10)
+
+Implementation has started, so do not paste these docs blindly — reconcile each
+section against the working tree first:
+
+- `database/migrations/00001_init.sql` already contains the extensions and the
+  `prefixed_nanoid` / `is_prefixed_pid` / `update_updated_at_column` helpers.
+- `database/migrations/00002_auth_identity.sql` already exists and creates the
+  full identity schema from doc 08.
+- `database/queries/auth.sql` was removed in commit 5e82b5e and must be
+  re-added; the working tree already has the matching `database/sqlc/auth.sql.go`
+  deletion pending.
+- `database/queries/seed.sql` and `cmd/seed/main.go` exist as WIP subsets and
+  should be replaced with the full versions in docs 08 and 11.
+- `features/auth` exists with a stub login page/handler (it logs the raw
+  password — replace it, do not extend it). Doc 10 replaces these files.
+- `config/config.go` already has `AppBaseURL`, `SMTPAddr`, `SMTPFrom`, and
+  `SeedPassword` as **required** env vars, and `.env.example` already includes
+  them. The config API is `config.Env.<Field>` (not `config.Global`), and the
+  environment check is `config.Env.AppEnv == config.Prod`.
+- Nullable `timestamptz` columns generate as `pgtype.Timestamptz` (check
+  `.Valid` / use `.Time`), not pointer types. Doc 10's service code is written
+  against this.
+
 Important constraints:
 
 - Use UUIDv7 for internal database IDs.
@@ -21,15 +45,18 @@ Important constraints:
 - Use Datastar from the first pass for auth interactions.
 - Regenerate `sqlc` and `templ` output after adding SQL or `.templ` files.
 
-The code below assumes this project is still early enough that replacing the
-toy `users` table from `database/migrations/00001_init.sql` is acceptable. If
-you have real data, write a careful migration instead of dropping that table.
+The schema assumed this project was early enough that replacing the toy
+`users` table was acceptable; the committed `00002_auth_identity.sql` already
+did this.
 
-Before implementing the Go files, make `golang.org/x/crypto` a direct
-dependency because Argon2id is part of the auth boundary:
+Before implementing the Go files, add the password hashing library (a thin,
+well-tested wrapper over `golang.org/x/crypto/argon2` that owns PHC encoding,
+decoding, and constant-time comparison) and the embedded NATS server used by
+the JetStream tests:
 
 ```sh
-go get golang.org/x/crypto
+go get github.com/alexedwards/argon2id
+go get github.com/nats-io/nats-server/v2
 ```
 
 ---

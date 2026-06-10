@@ -2,15 +2,17 @@
 
 ## Phase 1: Database Foundation
 
-- Add Postgres extensions needed by the model: `pgcrypto`, `citext`, and UUIDv7
-  support as required by the target Postgres version.
-- Add `prefixed_nanoid`, `is_prefixed_pid`, and `update_updated_at_column`
-  helpers.
-- Add enum types for principal kind, scope kind, membership role, and auth
-  method.
-- Add tables for principals, users, scopes, orgs, teams, memberships, and
-  credentials.
-- Add sqlc queries for all auth lookups and mutations.
+- Add Postgres extensions needed by the model: `pgcrypto` and `citext`. The
+  project runs pg18, so `uuidv7()` is native — no extension needed.
+  **Done — lives in `00001_init.sql` together with the `prefixed_nanoid`,
+  `is_prefixed_pid`, and `update_updated_at_column` helpers.**
+- Add enum types for principal kind, scope kind, and membership role, plus
+  tables for principals, users, scopes, orgs, teams, memberships, and
+  credentials. **Done — `00002_auth_identity.sql`.**
+- Add sqlc queries for all auth lookups and mutations. **Remaining:**
+  `database/queries/auth.sql` was removed in commit 5e82b5e and must be
+  re-added (doc 08 §2), and the WIP `database/queries/seed.sql` replaced with
+  the full version (doc 08 §3).
 
 Done when migrations apply cleanly and sqlc output is regenerated.
 
@@ -19,14 +21,18 @@ tokens.
 
 ## Phase 2: Crypto And Token Primitives
 
-- Add Argon2id hash, verify, and rehash-needed helpers.
+- Add Argon2id hash, verify, and rehash-needed helpers on top of
+  `github.com/alexedwards/argon2id`.
 - Add secure token generation.
 - Add token/code hashing helpers for sessions, password resets, and OTP codes.
+- Add the generic `CASUpdate` JetStream KV helper that all auth
+  read-modify-writes share.
 - Add JetStream bucket/stream setup for auth sessions, OTP challenges, password
   reset tokens, and auth events.
-- Add unit tests for password hashing and token hashing.
+- Add the embedded `nats-server` test fixture, plus unit tests for password
+  hashing, token hashing, `CASUpdate`, and the rate limiter.
 
-Done when crypto helpers are covered by focused tests.
+Done when crypto and KV helpers are covered by focused tests.
 
 ## Phase 3: Seed Data
 

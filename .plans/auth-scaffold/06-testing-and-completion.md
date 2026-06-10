@@ -13,12 +13,22 @@ Crypto:
 - reset token hashing
 - JetStream key naming for session, OTP, and reset state
 
+KV CAS helper (`CASUpdate`):
+
+- missing key without create returns not-found
+- create path initializes from the zero value
+- an apply error aborts without writing
+- contention beyond the retry budget returns `ErrCASContention`
+- a non-conflict KV error is returned, not retried
+
 Rate limiter:
 
 - counts hits and denies once over the limit within the window
 - counter resets after the window elapses
-- a non-conflict KV error is returned, not retried
-- fails closed (denies) if the counter cannot be written within the retry budget
+- fails closed (denies) on `ErrCASContention`
+
+All JetStream tests run against an embedded in-process `nats-server` (see doc
+11) — no Docker dependency, no KV fakes.
 
 Sessions:
 
@@ -38,6 +48,9 @@ HTTP flows:
 - password login for an unknown email still runs a hash verification (no fast
   path that would leak account existence by timing)
 - OTP request returns generic response
+- OTP request and forgot-password respond without waiting on the mailer (a
+  slow/blocking mailer must not delay the generic response — SMTP latency is
+  an enumeration oracle, see doc 04)
 - OTP request returns ErrRateLimited (logged, generic response to user) when
   over the limit
 - OTP verification succeeds with valid code
@@ -50,6 +63,9 @@ HTTP flows:
 - reset-password rejects a too-short password without consuming the reset token
   (token still usable on resubmit)
 - dashboard Datastar endpoints require auth
+- a logged-out Datastar request to a protected endpoint receives an SSE
+  redirect event, not an HTML redirect
+- authenticated `GET /auth/login` redirects to `/`
 
 Seeders:
 
@@ -66,6 +82,13 @@ Security middleware:
 - login rate limits trigger
 - OTP request and verify limits trigger
 - reset limits trigger
+
+Note for test authors: the Fetch Metadata fallback is deliberately
+conservative — an unsafe request with no `Sec-Fetch-Site` header and no
+same-host `Origin`/`Referer` gets a 403. Handler tests (and curl-style manual
+checks) must set `Sec-Fetch-Site: same-origin` or a matching `Origin` header
+on every POST, or they will be rejected by the middleware rather than exercise
+the handler.
 
 ## Generated Output Checks
 

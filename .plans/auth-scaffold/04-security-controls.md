@@ -2,8 +2,10 @@
 
 ## Password Hashing
 
-Use Argon2id for password storage. Generate a random salt per password and store
-encoded, versioned hashes so parameters can change over time.
+Use Argon2id for password storage via `github.com/alexedwards/argon2id`, which
+owns per-password salting, PHC-encoded versioned hashes, and constant-time
+comparison. The project's password package owns only policy: parameters,
+minimum length, and the timing-equalizing dummy verification.
 
 The password package should make these operations explicit:
 
@@ -11,8 +13,12 @@ The password package should make these operations explicit:
 - verify password
 - identify whether a stored hash needs rehashing
 
-Password verification should use constant-time comparison for derived hashes.
 User-facing errors must stay generic.
+
+Argon2id at these parameters allocates 64 MB per verification, so concurrent
+logins spike memory roughly linearly. The rate limiter is the backstop; if
+login is ever exposed to heavy public traffic, put a small semaphore around
+hashing rather than lowering the parameters.
 
 ### Server-side password policy
 
@@ -31,6 +37,13 @@ an account. When there is no matching credential (or the credential/principal is
 disabled), run a verification against a precomputed throwaway hash
 (`VerifyDummyPassword`) before returning the generic error, so an attacker
 cannot distinguish registered emails by measuring response latency.
+
+The same rule applies to flows that send email. OTP requests and
+forgot-password requests must send mail **asynchronously** and return the
+generic response immediately: a handler that waits on SMTP makes the
+"email exists" response a full SMTP round-trip slower than the "no account"
+response, which is just as good an enumeration oracle as a missing hash
+computation. Mail failures are logged server-side only.
 
 ## Sessions
 
@@ -52,6 +65,11 @@ Session validation must read JetStream auth session state and check:
 - session is not revoked
 - principal is not disabled
 - principal auth was not invalidated after the session was issued
+
+The principal checks run against Postgres in a single joined query per
+request. Last-seen metadata is updated at most once per few minutes — a KV
+write per request is amplification, and last-seen is best-effort data, not a
+security control.
 
 ## Fetch Metadata CSRF Protection
 
@@ -85,11 +103,13 @@ exists.
 
 Implementation notes:
 
-- The limiter uses optimistic concurrency on a JetStream KV counter. Retries on
-  a revision conflict must be **bounded** (a fixed small loop, never recursion),
-  and only a conflict should be retried -- any other KV error is returned
-  immediately. If the counter cannot be settled within the retry budget, fail
-  **closed** (treat the request as not allowed).
+- Every optimistic-concurrency read-modify-write against JetStream KV — the
+  rate limit counter, OTP attempt counting, session revocation, reset-token
+  consumption — goes through a single generic helper (`CASUpdate` in
+  `internal/auth`). Retries on a revision conflict are **bounded** (a fixed
+  small loop, never recursion), only a conflict is retried — any other KV
+  error returns immediately — and exhausting the retry budget fails
+  **closed** (the request is treated as not allowed).
 - Service methods must return `ErrRateLimited` when over the limit, distinct from
   a real limiter error. Returning a nil error on the over-limit path hides the
   condition from callers and logging.
@@ -97,6 +117,11 @@ Implementation notes:
   wrong ones. Persist the incremented counter with the same bounded
   optimistic-concurrency retry so concurrent guesses cannot share one revision
   and bypass the attempt cap.
+- IP-keyed limits use `RemoteAddr` only. This is a **known deferral**: it is
+  correct while the app terminates its own connections, but behind a reverse
+  proxy every limit key collapses to the proxy address. When a proxy enters
+  the picture, parse `X-Forwarded-For` from the configured trusted proxy only
+  — never unconditionally, or clients can spoof their way past IP limits.
 
 ## Account And Session Invalidation
 

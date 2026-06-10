@@ -23,6 +23,12 @@ const (
 	SessionCookieName = "app_session"
 	sessionTokenBytes = 32
 	resetTokenBytes   = 32
+
+	// sessionTouchInterval throttles last-seen updates; one KV write per
+	// request is pure amplification for best-effort metadata.
+	sessionTouchInterval = 5 * time.Minute
+
+	otpMaxAttempts = 5
 )
 
 type StateStore struct {
@@ -33,16 +39,16 @@ type StateStore struct {
 }
 
 type SessionRecord struct {
-	PID          string    `json:"pid"`
+	PID         string    `json:"pid"`
 	PrincipalID uuid.UUID `json:"principal_id"`
 	AuthMethod  string    `json:"auth_method"`
 	CreatedIP   string    `json:"created_ip"`
-	LastSeenIP   string    `json:"last_seen_ip"`
-	UserAgent    string    `json:"user_agent"`
-	IssuedAt     time.Time `json:"issued_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	LastSeenAt   time.Time `json:"last_seen_at"`
-	RevokedAt    time.Time `json:"revoked_at,omitempty"`
+	LastSeenIP  string    `json:"last_seen_ip"`
+	UserAgent   string    `json:"user_agent"`
+	IssuedAt    time.Time `json:"issued_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
+	RevokedAt   time.Time `json:"revoked_at,omitempty"`
 }
 
 type OTPChallenge struct {
@@ -85,8 +91,8 @@ func (s *StateStore) CreateSession(ctx context.Context, principalID uuid.UUID, a
 	record := SessionRecord{
 		PID:         pid,
 		PrincipalID: principalID,
-		AuthMethod: authMethod,
-		CreatedIP:  ip,
+		AuthMethod:  authMethod,
+		CreatedIP:   ip,
 		LastSeenIP:  ip,
 		UserAgent:   userAgent,
 		IssuedAt:    now,
@@ -119,29 +125,27 @@ func (s *StateStore) GetSession(ctx context.Context, token string, ip string) (S
 		return SessionRecord{}, ErrInvalidSession
 	}
 
-	record.LastSeenAt = now
-	record.LastSeenIP = ip
-	_ = s.putUpdate(ctx, s.sessions, key, record, entry.Revision())
+	if now.Sub(record.LastSeenAt) >= sessionTouchInterval {
+		record.LastSeenAt = now
+		record.LastSeenIP = ip
+		_ = s.putUpdate(ctx, s.sessions, key, record, entry.Revision())
+	}
 
 	return record, nil
 }
 
 func (s *StateStore) RevokeSession(ctx context.Context, token string) error {
-	key := authcore.TokenHash(token)
-	entry, err := s.sessions.Get(ctx, key)
+	_, err := authcore.CASUpdate(ctx, s.sessions, authcore.TokenHash(token), false, func(record *SessionRecord) error {
+		record.RevokedAt = s.now().UTC()
+		return nil
+	})
 	if errors.Is(err, jetstream.ErrKeyNotFound) {
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("get session for revoke: %w", err)
+		return fmt.Errorf("revoke session: %w", err)
 	}
-
-	var record SessionRecord
-	if err := json.Unmarshal(entry.Value(), &record); err != nil {
-		return fmt.Errorf("decode session for revoke: %w", err)
-	}
-	record.RevokedAt = s.now().UTC()
-	return s.putUpdate(ctx, s.sessions, key, record, entry.Revision())
+	return nil
 }
 
 func (s *StateStore) CreateOTP(ctx context.Context, credentialID, principalID uuid.UUID, email string) (string, OTPChallenge, error) {
@@ -171,66 +175,34 @@ func (s *StateStore) CreateOTP(ctx context.Context, credentialID, principalID uu
 }
 
 func (s *StateStore) VerifyOTP(ctx context.Context, email, code string) (OTPChallenge, error) {
-	key := otpKey(email)
+	now := s.now().UTC()
+	codeHash := authcore.TokenHash(code)
 
-	// Verifying an OTP is a read-modify-write: read the challenge, bump its
-	// attempt counter, and write it back. The counter enforces the per-challenge
-	// 5-attempt cap, so it MUST advance on every guess -- including wrong ones.
-	//
-	// The original code wrote the counter back with `_ = s.putUpdate(...)`,
-	// discarding the result. Because putUpdate uses the entry's revision for
-	// optimistic concurrency, several wrong guesses sent at once all read the
-	// same revision, all increment to the same value, and all but one Update
-	// fails silently. The cap then advances by 1 instead of N, letting an
-	// attacker spend many parallel guesses against one challenge. (The
-	// IP+email verify rate limiter in the service is a backstop, but the cap
-	// itself must hold.)
-	//
-	// Fix: do the whole read-modify-write in a bounded loop and treat a failed
-	// Update as a lost race -- re-read and retry so the counter reliably moves.
-	// We decide the outcome first, then persist; on success we also stamp
-	// ConsumedAt in the same write, so a code can be accepted at most once.
-	const maxAttempts = 5
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		entry, err := s.otp.Get(ctx, key)
-		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			return OTPChallenge{}, ErrInvalidOTP
+	var consumed bool
+	challenge, err := authcore.CASUpdate(ctx, s.otp, otpKey(email), false, func(c *OTPChallenge) error {
+		// The attempt counter must advance on every guess, including wrong
+		// ones, so concurrent guesses cannot share one revision and slip
+		// past the cap.
+		c.AttemptCount++
+		consumed = c.ConsumedAt.IsZero() &&
+			!now.After(c.ExpiresAt) &&
+			c.AttemptCount <= otpMaxAttempts &&
+			codeHash == c.CodeHash
+		if consumed {
+			c.ConsumedAt = now
 		}
-		if err != nil {
-			return OTPChallenge{}, fmt.Errorf("get otp challenge: %w", err)
-		}
-
-		var challenge OTPChallenge
-		if err := json.Unmarshal(entry.Value(), &challenge); err != nil {
-			return OTPChallenge{}, fmt.Errorf("decode otp challenge: %w", err)
-		}
-
-		now := s.now().UTC()
-		challenge.AttemptCount++
-		invalid := !challenge.ConsumedAt.IsZero() ||
-			now.After(challenge.ExpiresAt) ||
-			challenge.AttemptCount > 5 ||
-			authcore.TokenHash(code) != challenge.CodeHash
-		if !invalid {
-			challenge.ConsumedAt = now
-		}
-
-		if err := s.putUpdate(ctx, s.otp, key, challenge, entry.Revision()); err != nil {
-			// Lost the optimistic-concurrency race (or a transient KV error):
-			// re-read and retry so this guess still counts. Bounded by
-			// maxAttempts; see RateLimiter.Allow for the same pattern and the
-			// note on matching a version-specific conflict sentinel.
-			continue
-		}
-
-		if invalid {
-			return OTPChallenge{}, ErrInvalidOTP
-		}
-		return challenge, nil
+		return nil
+	})
+	if errors.Is(err, jetstream.ErrKeyNotFound) || errors.Is(err, authcore.ErrCASContention) {
+		return OTPChallenge{}, ErrInvalidOTP
 	}
-	// Could not settle the write within maxAttempts. Fail closed: reject the
-	// guess rather than letting it through without counting it.
-	return OTPChallenge{}, ErrInvalidOTP
+	if err != nil {
+		return OTPChallenge{}, fmt.Errorf("verify otp challenge: %w", err)
+	}
+	if !consumed {
+		return OTPChallenge{}, ErrInvalidOTP
+	}
+	return challenge, nil
 }
 
 func (s *StateStore) CreatePasswordReset(ctx context.Context, principalID uuid.UUID, email string) (string, PasswordReset, error) {
@@ -258,27 +230,19 @@ func (s *StateStore) CreatePasswordReset(ctx context.Context, principalID uuid.U
 }
 
 func (s *StateStore) ConsumePasswordReset(ctx context.Context, token string) (PasswordReset, error) {
-	key := authcore.TokenHash(token)
-	entry, err := s.resets.Get(ctx, key)
-	if errors.Is(err, jetstream.ErrKeyNotFound) {
+	now := s.now().UTC()
+	reset, err := authcore.CASUpdate(ctx, s.resets, authcore.TokenHash(token), false, func(r *PasswordReset) error {
+		if !r.ConsumedAt.IsZero() || now.After(r.ExpiresAt) {
+			return ErrInvalidResetToken
+		}
+		r.ConsumedAt = now
+		return nil
+	})
+	if errors.Is(err, jetstream.ErrKeyNotFound) || errors.Is(err, authcore.ErrCASContention) {
 		return PasswordReset{}, ErrInvalidResetToken
 	}
 	if err != nil {
-		return PasswordReset{}, fmt.Errorf("get password reset: %w", err)
-	}
-
-	var reset PasswordReset
-	if err := json.Unmarshal(entry.Value(), &reset); err != nil {
-		return PasswordReset{}, fmt.Errorf("decode password reset: %w", err)
-	}
-
-	now := s.now().UTC()
-	if !reset.ConsumedAt.IsZero() || now.After(reset.ExpiresAt) {
-		return PasswordReset{}, ErrInvalidResetToken
-	}
-	reset.ConsumedAt = now
-	if err := s.putUpdate(ctx, s.resets, key, reset, entry.Revision()); err != nil {
-		return PasswordReset{}, fmt.Errorf("consume password reset: %w", err)
+		return PasswordReset{}, err
 	}
 	return reset, nil
 }
@@ -358,6 +322,9 @@ func CurrentUser(ctx context.Context) (sqlc.User, bool) {
 
 ## 4. Add `features/auth/mailer.go`
 
+The service sends mail in the background (see `sendMailAsync` in service.go),
+so these methods may block on SMTP without delaying the HTTP response.
+
 ```go
 package auth
 
@@ -378,12 +345,12 @@ type SMTPMailer struct{}
 
 func (SMTPMailer) SendOTP(ctx context.Context, email string, code string) error {
 	body := fmt.Sprintf("Subject: Your login code\r\n\r\nYour login code is %s.\r\n", code)
-	return smtp.SendMail(config.Global.SMTPAddr, nil, config.Global.SMTPFrom, []string{email}, []byte(body))
+	return smtp.SendMail(config.Env.SMTPAddr, nil, config.Env.SMTPFrom, []string{email}, []byte(body))
 }
 
 func (SMTPMailer) SendPasswordReset(ctx context.Context, email string, link string) error {
 	body := fmt.Sprintf("Subject: Reset your password\r\n\r\nReset your password here: %s\r\n", link)
-	return smtp.SendMail(config.Global.SMTPAddr, nil, config.Global.SMTPFrom, []string{email}, []byte(body))
+	return smtp.SendMail(config.Env.SMTPAddr, nil, config.Env.SMTPFrom, []string{email}, []byte(body))
 }
 ```
 
@@ -397,6 +364,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -442,19 +410,14 @@ func (s *Service) LoginPassword(ctx context.Context, email, password, ip, userAg
 
 	row, err := s.queries.GetPasswordCredentialByEmail(ctx, email)
 	if errors.Is(err, pgx.ErrNoRows) {
-		// No account for this email. Spend the same time a real password check
-		// would (one Argon2id computation) before returning the generic error,
-		// so the response latency does not reveal whether the email is
-		// registered. See authcore.VerifyDummyPassword for the full rationale.
+		// Equalize timing with the real-credential path below.
 		authcore.VerifyDummyPassword(password)
 		return "", ErrInvalidCredentials
 	}
 	if err != nil {
 		return "", fmt.Errorf("get password credential: %w", err)
 	}
-	if row.CredentialDisabledAt != nil || row.PrincipalDisabledAt != nil {
-		// Account exists but cannot log in. Burn the same time here too, so a
-		// disabled account is not distinguishable from a wrong password.
+	if row.CredentialDisabledAt.Valid || row.PrincipalDisabledAt.Valid {
 		authcore.VerifyDummyPassword(password)
 		return "", ErrInvalidCredentials
 	}
@@ -473,15 +436,6 @@ func (s *Service) LoginPassword(ctx context.Context, email, password, ip, userAg
 }
 
 func (s *Service) RequestOTP(ctx context.Context, email, ip string) error {
-	// Rate-limit check. Keep the two outcomes separate, the way LoginPassword
-	// and VerifyOTP do:
-	//   - a real error from the limiter is returned as-is;
-	//   - being over the limit returns ErrRateLimited.
-	// The old `if err != nil || !allowed { return err }` form did stop the send
-	// (it returned before reaching the OTP code below), but on the rate-limited
-	// path it returned a nil error -- indistinguishable from success. That lost
-	// the Warn log in the handler and, worse, silently breaks the moment any
-	// future caller relies on ErrRateLimited to tell the user to slow down.
 	allowed, err := s.limits.Allow(ctx, "login.otp.request."+limitKey(ip, email), 5, 10*time.Minute)
 	if err != nil {
 		return err
@@ -497,7 +451,7 @@ func (s *Service) RequestOTP(ctx context.Context, email, ip string) error {
 	if err != nil {
 		return fmt.Errorf("get otp credential: %w", err)
 	}
-	if row.CredentialDisabledAt != nil || row.PrincipalDisabledAt != nil {
+	if row.CredentialDisabledAt.Valid || row.PrincipalDisabledAt.Valid {
 		return nil
 	}
 
@@ -506,7 +460,13 @@ func (s *Service) RequestOTP(ctx context.Context, email, ip string) error {
 		return err
 	}
 	_ = s.publishAuthEvent(ctx, "auth.otp.requested", challenge.PID, row.PrincipalID.String())
-	return s.mailer.SendOTP(ctx, row.Email, code)
+
+	// Async send: waiting on SMTP would make the generic response measurably
+	// slower for registered emails — an enumeration oracle.
+	s.sendMailAsync("otp code", func(ctx context.Context) error {
+		return s.mailer.SendOTP(ctx, row.Email, code)
+	})
+	return nil
 }
 
 func (s *Service) VerifyOTP(ctx context.Context, email, code, ip, userAgent string) (string, error) {
@@ -536,21 +496,20 @@ func (s *Service) CurrentUser(ctx context.Context, token string, r *http.Request
 	if err != nil {
 		return sqlc.User{}, err
 	}
-	authState, err := s.queries.GetPrincipalAuthState(ctx, session.PrincipalID)
-	if err != nil {
-		return sqlc.User{}, fmt.Errorf("get principal auth state: %w", err)
-	}
-	if authState.DisabledAt != nil {
+	row, err := s.queries.GetUserWithAuthState(ctx, session.PrincipalID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return sqlc.User{}, ErrInvalidSession
 	}
-	if authState.AuthInvalidatedAt != nil && authState.AuthInvalidatedAt.After(session.IssuedAt) {
-		return sqlc.User{}, ErrInvalidSession
-	}
-	user, err := s.queries.GetUserByPrincipalID(ctx, session.PrincipalID)
 	if err != nil {
 		return sqlc.User{}, fmt.Errorf("get current user: %w", err)
 	}
-	return user, nil
+	if row.DisabledAt.Valid {
+		return sqlc.User{}, ErrInvalidSession
+	}
+	if row.AuthInvalidatedAt.Valid && row.AuthInvalidatedAt.Time.After(session.IssuedAt) {
+		return sqlc.User{}, ErrInvalidSession
+	}
+	return row.User, nil
 }
 
 func (s *Service) Logout(ctx context.Context, token string) error {
@@ -558,8 +517,6 @@ func (s *Service) Logout(ctx context.Context, token string) error {
 }
 
 func (s *Service) RequestPasswordReset(ctx context.Context, email, ip string) error {
-	// Same fix as RequestOTP: split the limiter error from the over-limit case
-	// so being rate-limited returns ErrRateLimited instead of a nil error.
 	allowed, err := s.limits.Allow(ctx, "password_reset.request."+limitKey(ip, email), 5, time.Hour)
 	if err != nil {
 		return err
@@ -580,20 +537,19 @@ func (s *Service) RequestPasswordReset(ctx context.Context, email, ip string) er
 	if err != nil {
 		return err
 	}
-	link := config.Global.AppBaseURL + "/auth/reset-password?token=" + url.QueryEscape(token)
+	link := config.Env.AppBaseURL + "/auth/reset-password?token=" + url.QueryEscape(token)
 	_ = s.publishAuthEvent(ctx, "auth.password_reset.requested", reset.PID, row.PrincipalID.String())
-	return s.mailer.SendPasswordReset(ctx, row.Email, link)
+
+	// Async send for the same enumeration-timing reason as RequestOTP.
+	s.sendMailAsync("password reset", func(ctx context.Context) error {
+		return s.mailer.SendPasswordReset(ctx, row.Email, link)
+	})
+	return nil
 }
 
 func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) error {
-	// Enforce the password policy on the SERVER -- the form's minlength="12" is
-	// only a browser hint and is trivially bypassed by a direct POST. Without
-	// this, anyone holding a valid reset token could set an empty or one-char
-	// password.
-	//
-	// Validate BEFORE consuming the token: ConsumePasswordReset is single-use,
-	// so if we consumed it first and then rejected a too-short password, the
-	// user's reset link would be burned and they'd have to request a new email.
+	// Validate before consuming the single-use token, so a rejected password
+	// does not burn the user's reset link.
 	if err := authcore.ValidatePassword(newPassword); err != nil {
 		return err
 	}
@@ -620,6 +576,19 @@ func (s *Service) ResetPassword(ctx context.Context, token, newPassword string) 
 	return nil
 }
 
+// sendMailAsync runs an email send in the background with its own timeout,
+// detached from the request context. Failures are logged, never surfaced:
+// the response must stay identical whether or not an email was sent.
+func (s *Service) sendMailAsync(kind string, send func(ctx context.Context) error) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := send(ctx); err != nil {
+			slog.Error("send auth mail", "kind", kind, "error", err)
+		}
+	}()
+}
+
 func (s *Service) publishAuthEvent(ctx context.Context, subject, id, principalID string) error {
 	payload, err := json.Marshal(map[string]string{
 		"id":           id,
@@ -632,6 +601,9 @@ func (s *Service) publishAuthEvent(ctx context.Context, subject, id, principalID
 	return err
 }
 
+// clientIP trusts RemoteAddr only. Behind a reverse proxy, parse
+// X-Forwarded-For here — but only from a configured trusted proxy, or clients
+// can spoof their way past IP rate limits.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err == nil {
@@ -656,18 +628,23 @@ import (
 	"datastar-go/config"
 )
 
+// RequireUser redirects through redirectDatastarOrHTTP: protected Datastar
+// endpoints are called via fetch, which would follow a 303 to the login page
+// and choke on the HTML response — they need an SSE redirect instead. This is
+// what makes an expired session navigate to login on the next click rather
+// than failing silently.
 func (s *Service) RequireUser(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie(SessionCookieName)
 		if err != nil || cookie.Value == "" {
-			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+			redirectDatastarOrHTTP(w, r, "/auth/login")
 			return
 		}
 
 		user, err := s.CurrentUser(r.Context(), cookie.Value, r)
 		if err != nil {
 			clearSessionCookie(w)
-			http.Redirect(w, r, "/auth/login", http.StatusSeeOther)
+			redirectDatastarOrHTTP(w, r, "/auth/login")
 			return
 		}
 
@@ -682,7 +659,7 @@ func setSessionCookie(w http.ResponseWriter, token string) {
 		Path:     "/",
 		MaxAge:   30 * 24 * 60 * 60,
 		HttpOnly: true,
-		Secure:   config.Global.Environment == config.Prod,
+		Secure:   config.Env.AppEnv == config.Prod,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -694,13 +671,19 @@ func clearSessionCookie(w http.ResponseWriter) {
 		Path:     "/",
 		MaxAge:   -1,
 		HttpOnly: true,
-		Secure:   config.Global.Environment == config.Prod,
+		Secure:   config.Env.AppEnv == config.Prod,
 		SameSite: http.SameSiteLaxMode,
 	})
 }
 ```
 
-## 7. Add `features/auth/routes.go`
+## 7. Replace `features/auth/routes.go`
+
+`features/auth` already exists with a stub: `routes.go` registers only
+`GET/POST /auth/login`, `services.go` is an empty queries wrapper, and the
+stub `Login` handler logs the raw password. Replace all of that with the code
+in this doc — the new `SetupRoutes` takes the NATS client and returns the
+`*Service` so the router can reuse its `RequireUser` middleware.
 
 ```go
 package auth
@@ -742,13 +725,12 @@ func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool, natsC
 }
 ```
 
-## 8. Add `features/auth/handlers.go`
+## 8. Replace `features/auth/handlers.go`
 
 ```go
 package auth
 
 import (
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -768,6 +750,12 @@ func NewHandler(service *Service) *Handler {
 }
 
 func (h *Handler) LoginPage(w http.ResponseWriter, r *http.Request) {
+	if cookie, err := r.Cookie(SessionCookieName); err == nil && cookie.Value != "" {
+		if _, err := h.service.CurrentUser(r.Context(), cookie.Value, r); err == nil {
+			http.Redirect(w, r, "/", http.StatusSeeOther)
+			return
+		}
+	}
 	_ = pages.LoginPage(pages.LoginView{}).Render(r.Context(), w)
 }
 
@@ -850,10 +838,8 @@ func (h *Handler) ResetPasswordPage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	err := h.service.ResetPassword(r.Context(), r.FormValue("token"), r.FormValue("password"))
-	// A too-short password is the user's own input, not a sensitive condition,
-	// so tell them exactly what's wrong instead of the generic token message.
-	// (The token is still intact here -- we validate the password before
-	// consuming it, so they can simply resubmit.)
+	// A too-short password is not sensitive; the token is still unconsumed,
+	// so the user can resubmit with the same link.
 	if errors.Is(err, authcore.ErrPasswordTooShort) {
 		sse := datastar.NewSSE(w, r)
 		_ = sse.PatchElementTempl(pages.ResetMessage("Password must be at least 12 characters."))
@@ -882,43 +868,29 @@ func loginError(err error) string {
 	return "Invalid email or password."
 }
 
+// redirectDatastarOrHTTP picks the channel the client can act on: Datastar
+// requests expect SSE events, plain form posts expect an HTTP redirect.
 func redirectDatastarOrHTTP(w http.ResponseWriter, r *http.Request, path string) {
 	if r.Header.Get("Datastar-Request") == "true" {
 		sse := datastar.NewSSE(w, r)
-		_ = sse.ExecuteScript("window.location.href = " + jsString(path))
+		_ = sse.Redirect(path)
 		return
 	}
 	http.Redirect(w, r, path, http.StatusSeeOther)
 }
-
-// jsString renders value as a safe, fully-escaped JavaScript string literal.
-//
-// We build the redirect script by concatenating strings, so anything spliced
-// into it must be escaped or it can break the script (an unescaped quote ends
-// the literal early) or inject arbitrary JS. The previous quoteJS just wrapped
-// the value in single quotes and escaped nothing.
-//
-// Every current caller passes a static path, so this is defensive today -- but
-// it is the correct, reusable primitive the moment a dynamic or user-derived
-// path flows in. json.Marshal of a string produces a valid double-quoted JS
-// literal with quotes, backslashes, and control characters all escaped.
-func jsString(value string) string {
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		// value is a plain string, so marshalling cannot fail; fall back to an
-		// empty literal rather than emitting broken script.
-		return "''"
-	}
-	return string(encoded)
-}
 ```
 
-## 9. Add `features/auth/pages/login.templ`
+## 9. Replace `features/auth/pages/login.templ`
+
+A stub login page already exists at this path; replace it (and regenerate the
+`_templ.go` output). Pages wrap in the shared `layouts.BaseLayout`, which
+already loads datastar.js and the dev reload hook — auth pages must not
+hand-roll their own `<html>` documents.
 
 ```templ
 package pages
 
-import "datastar-go/web/resources"
+import "datastar-go/features/common/layouts"
 
 type LoginView struct {
 	Mode    string
@@ -927,16 +899,9 @@ type LoginView struct {
 }
 
 templ LoginPage(view LoginView) {
-	<!DOCTYPE html>
-	<html lang="en">
-		<head>
-			<title>Login</title>
-			<script type="module" src={ resources.StaticPath("datastar/datastar.js") }></script>
-		</head>
-		<body>
-			@LoginPanel(view)
-		</body>
-	</html>
+	@layouts.BaseLayout("Login") {
+		@LoginPanel(view)
+	}
 }
 
 templ LoginPanel(view LoginView) {
@@ -976,7 +941,7 @@ templ LoginPanel(view LoginView) {
 ```templ
 package pages
 
-import "datastar-go/web/resources"
+import "datastar-go/features/common/layouts"
 
 type ResetView struct {
 	Token string
@@ -984,45 +949,31 @@ type ResetView struct {
 }
 
 templ ForgotPasswordPage(view ResetView) {
-	<!DOCTYPE html>
-	<html lang="en">
-		<head>
-			<title>Forgot password</title>
-			<script type="module" src={ resources.StaticPath("datastar/datastar.js") }></script>
-		</head>
-		<body>
-			<main>
-				<h1>Reset password</h1>
-				@ResetMessage("")
-				<form method="post" action="/auth/forgot-password" data-on:submit__prevent="@post('/auth/forgot-password', {contentType: 'form'})">
-					<label>Email <input name="email" type="email" autocomplete="email" required/></label>
-					<button type="submit">Send reset link</button>
-				</form>
-				<a href="/auth/login">Back to login</a>
-			</main>
-		</body>
-	</html>
+	@layouts.BaseLayout("Forgot password") {
+		<main>
+			<h1>Reset password</h1>
+			@ResetMessage("")
+			<form method="post" action="/auth/forgot-password" data-on:submit__prevent="@post('/auth/forgot-password', {contentType: 'form'})">
+				<label>Email <input name="email" type="email" autocomplete="email" required/></label>
+				<button type="submit">Send reset link</button>
+			</form>
+			<a href="/auth/login">Back to login</a>
+		</main>
+	}
 }
 
 templ ResetPasswordPage(view ResetView) {
-	<!DOCTYPE html>
-	<html lang="en">
-		<head>
-			<title>Set new password</title>
-			<script type="module" src={ resources.StaticPath("datastar/datastar.js") }></script>
-		</head>
-		<body>
-			<main>
-				<h1>Set new password</h1>
-				@ResetMessage("")
-				<form method="post" action="/auth/reset-password" data-on:submit__prevent="@post('/auth/reset-password', {contentType: 'form'})">
-					<input type="hidden" name="token" value={ view.Token }/>
-					<label>New password <input name="password" type="password" autocomplete="new-password" required minlength="12"/></label>
-					<button type="submit">Update password</button>
-				</form>
-			</main>
-		</body>
-	</html>
+	@layouts.BaseLayout("Set new password") {
+		<main>
+			<h1>Set new password</h1>
+			@ResetMessage("")
+			<form method="post" action="/auth/reset-password" data-on:submit__prevent="@post('/auth/reset-password', {contentType: 'form'})">
+				<input type="hidden" name="token" value={ view.Token }/>
+				<label>New password <input name="password" type="password" autocomplete="new-password" required minlength="12"/></label>
+				<button type="submit">Update password</button>
+			</form>
+		</main>
+	}
 }
 
 templ ResetMessage(message string) {
@@ -1032,41 +983,47 @@ templ ResetMessage(message string) {
 
 ## 11. Update `router/router.go`
 
-Register auth first, then protect the index feature:
+The current `SetupRoutes` registers both features with `errors.Join` and calls
+`authFeature.SetupRoutes(ctx, router, db)`. Replace its body so auth is
+registered first (with the new signature), the index feature is mounted behind
+`RequireUser`, and Fetch Metadata middleware covers all unsafe requests. In
+chi, middleware must be registered before routes:
 
 ```go
-authFeature "datastar-go/features/auth"
-```
+func SetupRoutes(ctx context.Context, router chi.Router, db *pgxpool.Pool, natsClient *natsx.Client) (err error) {
+	router.Use(authcore.FetchMetadata)
 
-Replace the feature setup block:
+	if config.Env.AppEnv == config.Dev {
+		setupReload(router)
+	}
+	router.Handle("/static/*", resources.Handler())
 
-```go
-authService, err := authFeature.SetupRoutes(ctx, router, db, natsClient)
-if err != nil {
-	return fmt.Errorf("setup auth routes: %w", err)
+	authService, err := authFeature.SetupRoutes(ctx, router, db, natsClient)
+	if err != nil {
+		return fmt.Errorf("setup auth routes: %w", err)
+	}
+
+	protected := chi.NewRouter()
+	protected.Use(authService.RequireUser)
+	if err := indexFeature.SetupRoutes(ctx, protected, db, natsClient); err != nil {
+		return fmt.Errorf("setup index routes: %w", err)
+	}
+	router.Mount("/", protected)
+
+	return nil
 }
-
-protected := chi.NewRouter()
-protected.Use(authService.RequireUser)
-if err := indexFeature.SetupRoutes(ctx, protected, db, natsClient); err != nil {
-	return fmt.Errorf("setup index routes: %w", err)
-}
-router.Mount("/", protected)
 ```
 
-Also add global Fetch Metadata protection near the top of `SetupRoutes` if you
-want it to cover all unsafe requests. In chi, register middleware before
-registering routes:
-
-```go
-router.Use(authcore.FetchMetadata)
-```
-
-where the import alias is:
+with the extra import:
 
 ```go
 authcore "datastar-go/internal/auth"
 ```
+
+Keep `/reload`, `/hotreload`, and `/static/*` outside the protected router so
+dev reload and assets stay public (doc 03's route list). They are GET
+endpoints, so the Fetch Metadata middleware (which only gates unsafe methods)
+does not affect them.
 
 ## 12. Update `features/index/pages/index.templ`
 

@@ -1,249 +1,40 @@
 # Database And Queries Code
 
-## 1. Add `database/migrations/00002_auth_identity.sql`
+## 1. Migration `database/migrations/00002_auth_identity.sql` — DONE
 
-This migration creates durable identity data only. Sessions, OTP challenges, and
-password reset tokens intentionally do not appear here.
+This is already committed. The split differs slightly from the original plan:
 
-```sql
--- +goose Up
--- +goose StatementBegin
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE EXTENSION IF NOT EXISTS citext;
+- The extensions (`pgcrypto`, `citext`) and the `prefixed_nanoid`,
+  `is_prefixed_pid`, and `update_updated_at_column` helpers live in
+  `database/migrations/00001_init.sql`, not in `00002`.
+- `00002_auth_identity.sql` creates the enum types (`principal_kind`,
+  `scope_kind`, `membership_role`) and the tables: `principals`, `users`,
+  `scopes`, `orgs`, `teams`, `memberships`, `password_credentials`,
+  `email_otp_credentials`, with PID checks, indexes, and `updated_at` triggers.
+- Its `Down` drops only the auth tables and enum types; extensions and helpers
+  are owned by `00001`.
 
-DROP TABLE IF EXISTS users;
+Postgres in `compose.yml` is pg18, so native `uuidv7()` is available — no
+extension or polyfill needed.
 
-CREATE OR REPLACE FUNCTION prefixed_nanoid(
-  prefix text DEFAULT 'id',
-  size int DEFAULT 16,
-  alphabet text DEFAULT '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
-) RETURNS text
-LANGUAGE plpgsql VOLATILE PARALLEL SAFE AS $$
-DECLARE
-  id_builder text := '';
-  counter int := 0;
-  bytes bytea;
-  alphabet_index int;
-  alphabet_array text[];
-  alphabet_length int := 64;
-  mask int := 63;
-  step int := 34;
-BEGIN
-  alphabet_array := regexp_split_to_array(alphabet, '');
-  alphabet_length := array_length(alphabet_array, 1);
-
-  LOOP
-    bytes := gen_random_bytes(step);
-    FOR counter IN 0..step - 1 LOOP
-      alphabet_index := (get_byte(bytes, counter) & mask) + 1;
-      IF alphabet_index <= alphabet_length THEN
-        id_builder := id_builder || alphabet_array[alphabet_index];
-        IF length(id_builder) = size THEN
-          RETURN prefix || '_' || id_builder;
-        END IF;
-      END IF;
-    END LOOP;
-  END LOOP;
-END
-$$;
-
-CREATE OR REPLACE FUNCTION is_prefixed_pid(value text, prefix text, size int DEFAULT 16)
-RETURNS boolean
-LANGUAGE sql IMMUTABLE STRICT AS $$
-  SELECT value ~ ('^' || prefix || '_[1-9A-HJ-NP-Za-km-z]{' || size || '}$')
-$$;
-
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS trigger AS $$
-BEGIN
-  NEW.updated_at = now();
-  RETURN NEW;
-END;
-$$ language plpgsql;
-
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'principal_kind') THEN
-    CREATE TYPE principal_kind AS ENUM ('user', 'service_account');
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'scope_kind') THEN
-    CREATE TYPE scope_kind AS ENUM ('org', 'team');
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'membership_role') THEN
-    CREATE TYPE membership_role AS ENUM ('owner', 'admin', 'member', 'viewer');
-  END IF;
-END $$;
-
-CREATE TABLE principals (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('prn') CHECK (is_prefixed_pid(pid, 'prn')),
-  kind principal_kind NOT NULL,
-  disabled_at timestamptz NULL,
-  auth_invalidated_at timestamptz NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TRIGGER update_principals_updated_at
-BEFORE UPDATE ON principals
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TABLE users (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('usr') CHECK (is_prefixed_pid(pid, 'usr')),
-  principal_id uuid NOT NULL UNIQUE REFERENCES principals(id) ON DELETE CASCADE,
-  email citext NOT NULL UNIQUE,
-  name text NOT NULL,
-  is_staff boolean NOT NULL DEFAULT false,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TRIGGER update_users_updated_at
-BEFORE UPDATE ON users
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TABLE scopes (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('scp') CHECK (is_prefixed_pid(pid, 'scp')),
-  kind scope_kind NOT NULL,
-  parent_id uuid NULL REFERENCES scopes(id) ON DELETE CASCADE,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT scopes_parent_kind_chk CHECK (
-    (kind = 'org' AND parent_id IS NULL) OR
-    (kind = 'team' AND parent_id IS NOT NULL)
-  )
-);
-
-CREATE INDEX scopes_parent_id_idx ON scopes(parent_id);
-
-CREATE TRIGGER update_scopes_updated_at
-BEFORE UPDATE ON scopes
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TABLE orgs (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('org') CHECK (is_prefixed_pid(pid, 'org')),
-  scope_id uuid NOT NULL UNIQUE REFERENCES scopes(id) ON DELETE CASCADE,
-  name text NOT NULL,
-  slug citext NOT NULL UNIQUE,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE TRIGGER update_orgs_updated_at
-BEFORE UPDATE ON orgs
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TABLE teams (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('team') CHECK (is_prefixed_pid(pid, 'team')),
-  scope_id uuid NOT NULL UNIQUE REFERENCES scopes(id) ON DELETE CASCADE,
-  org_id uuid NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-  parent_team_id uuid NULL REFERENCES teams(id) ON DELETE CASCADE,
-  name text NOT NULL,
-  slug citext NOT NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (org_id, slug)
-);
-
-CREATE INDEX teams_org_id_idx ON teams(org_id);
-CREATE INDEX teams_parent_team_id_idx ON teams(parent_team_id);
-
-CREATE TRIGGER update_teams_updated_at
-BEFORE UPDATE ON teams
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TABLE memberships (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('mem') CHECK (is_prefixed_pid(pid, 'mem')),
-  scope_id uuid NOT NULL REFERENCES scopes(id) ON DELETE CASCADE,
-  principal_id uuid NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-  role membership_role NOT NULL,
-  joined_at timestamptz NOT NULL DEFAULT now(),
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (scope_id, principal_id)
-);
-
-CREATE INDEX memberships_principal_id_idx ON memberships(principal_id);
-
-CREATE TRIGGER update_memberships_updated_at
-BEFORE UPDATE ON memberships
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TABLE password_credentials (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('pwd') CHECK (is_prefixed_pid(pid, 'pwd')),
-  principal_id uuid NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-  email citext NOT NULL UNIQUE,
-  password_hash text NOT NULL,
-  password_updated_at timestamptz NOT NULL DEFAULT now(),
-  disabled_at timestamptz NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE INDEX password_credentials_principal_id_idx ON password_credentials(principal_id);
-
-CREATE TRIGGER update_password_credentials_updated_at
-BEFORE UPDATE ON password_credentials
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
-CREATE TABLE email_otp_credentials (
-  id uuid PRIMARY KEY DEFAULT uuidv7(),
-  pid text NOT NULL UNIQUE DEFAULT prefixed_nanoid('otp') CHECK (is_prefixed_pid(pid, 'otp')),
-  principal_id uuid NOT NULL REFERENCES principals(id) ON DELETE CASCADE,
-  email citext NOT NULL UNIQUE,
-  verified_at timestamptz NULL,
-  disabled_at timestamptz NULL,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  updated_at timestamptz NOT NULL DEFAULT now()
-);
-
-CREATE INDEX email_otp_credentials_principal_id_idx ON email_otp_credentials(principal_id);
-
-CREATE TRIGGER update_email_otp_credentials_updated_at
-BEFORE UPDATE ON email_otp_credentials
-FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
--- +goose StatementEnd
-
--- +goose Down
--- +goose StatementBegin
-DROP TABLE IF EXISTS email_otp_credentials;
-DROP TABLE IF EXISTS password_credentials;
-DROP TABLE IF EXISTS memberships;
-DROP TABLE IF EXISTS teams;
-DROP TABLE IF EXISTS orgs;
-DROP TABLE IF EXISTS scopes;
-DROP TABLE IF EXISTS users;
-DROP TABLE IF EXISTS principals;
-
-DROP TYPE IF EXISTS membership_role;
-DROP TYPE IF EXISTS scope_kind;
-DROP TYPE IF EXISTS principal_kind;
-
-DROP FUNCTION IF EXISTS update_updated_at_column();
-DROP FUNCTION IF EXISTS is_prefixed_pid(text, text, int);
-DROP FUNCTION IF EXISTS prefixed_nanoid(text, int, text);
-DROP EXTENSION IF EXISTS citext;
--- +goose StatementEnd
-```
+Sessions, OTP challenges, and password reset tokens intentionally do not appear
+in any migration; they live in JetStream.
 
 ## 2. Add `database/queries/auth.sql`
 
-```sql
--- name: GetUserByPrincipalID :one
-SELECT *
-FROM users
-WHERE principal_id = $1;
+`database/queries/auth.sql` was removed in commit 5e82b5e ("remove queries not
+being worked on right now") and the stale `database/sqlc/auth.sql.go` deletion
+is pending in the working tree. Re-add it when implementing the auth service:
 
--- name: GetPrincipalAuthState :one
-SELECT disabled_at, auth_invalidated_at
-FROM principals
-WHERE id = $1;
+```sql
+-- name: GetUserWithAuthState :one
+SELECT
+  sqlc.embed(users),
+  principals.disabled_at,
+  principals.auth_invalidated_at
+FROM users
+JOIN principals ON principals.id = users.principal_id
+WHERE users.principal_id = $1;
 
 -- name: GetPrincipalByUserEmail :one
 SELECT p.*
@@ -315,7 +106,21 @@ WHERE m.principal_id = $1
 ORDER BY s.kind, o.name, t.name;
 ```
 
-## 3. Add `database/queries/seed.sql`
+Notes:
+
+- Nullable `timestamptz` columns (`credential_disabled_at`,
+  `principal_disabled_at`, `auth_invalidated_at`) generate as
+  `pgtype.Timestamptz` — callers check `.Valid` and read `.Time`, not `!= nil`.
+  Doc 10's service code depends on this.
+- `GetUserWithAuthState` is the per-request session-validation query: one
+  round trip returns the user row (via `sqlc.embed`) together with the
+  principal's disabled/invalidated state.
+
+## 3. Replace `database/queries/seed.sql`
+
+A WIP version of this file exists in the working tree with a different
+`CreatePrincipal` shape (explicit `id`/`pid` parameters). Replace it with this
+version, which lets the database defaults generate `id` and `pid`:
 
 ```sql
 -- name: CreatePrincipal :one
@@ -395,54 +200,48 @@ SET role = EXCLUDED.role
 RETURNING *;
 ```
 
+`UpsertOrgForSeed` / `UpsertTeamForSeed` keep their `DO UPDATE` clauses so a
+changed fixture name propagates on re-run; `seed.Run` in doc 11 calls them on
+both the create and the already-exists path for exactly that reason.
+
 ## 4. Update `Taskfile.yml`
 
-Add this task:
+Add this task (not yet present):
 
 ```yaml
   db:seed:
     desc: Seed local org/team/user data
-    deps: [templ]
     cmds:
       - go run ./cmd/seed
 ```
 
-## 5. Update `.env.example`
+## 5. `.env.example` — DONE
 
-Add these values:
+`APP_BASE_URL`, `SMTP_ADDR`, `SMTP_FROM`, and `SEED_PASSWORD` are already in
+`.env.example`. Note they are **required** by config loading, so a `.env`
+missing them fails at boot.
 
-```sh
-APP_BASE_URL=http://localhost:8080
+## 6. `config/config.go` — DONE
 
-SMTP_ADDR=localhost:1025
-SMTP_FROM=noreply@example.test
-
-SEED_PASSWORD=ChangeMe123!
-```
-
-## 6. Update `config/config.go`
-
-Add fields to `Config`:
+The config package already has `AppBaseURL`, `SMTPAddr`, `SMTPFrom`, and
+`SeedPassword` fields, loaded as required values in `load()`. Access pattern
+used throughout docs 10 and 11:
 
 ```go
-AppBaseURL string
-
-SMTPAddr string
-SMTPFrom string
-
-SeedPassword string
+config.Env.AppBaseURL
+config.Env.SMTPAddr
+config.Env.SMTPFrom
+config.Env.SeedPassword
+config.Env.AppEnv == config.Prod // environment check
 ```
 
-Add values in `loadBase()`:
+There is no `config.Global` and no `loadBase()` — earlier drafts of this plan
+referenced both; any remaining snippet that does is stale.
 
-```go
-AppBaseURL: getEnv("APP_BASE_URL", "http://localhost:8080"),
-
-SMTPAddr: getEnv("SMTP_ADDR", "localhost:1025"),
-SMTPFrom: getEnv("SMTP_FROM", "noreply@example.test"),
-
-SeedPassword: getEnv("SEED_PASSWORD", "ChangeMe123!"),
-```
+One removal: drop `SessionSecret` from `Config`/`load()` and `SESSION_SECRET`
+from `.env.example`. Sessions are opaque random tokens stored as hashes — there
+is nothing to sign, so the secret is dead config that future projects would
+cargo-cult.
 
 ## 7. Regenerate
 

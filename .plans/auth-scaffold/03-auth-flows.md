@@ -14,10 +14,16 @@ is protected.
 
 ## Login Page
 
-`GET /auth/login` renders one login page with two supported methods:
+`GET /auth/login` redirects to `/` when the visitor already has a valid
+session; otherwise it renders one login page with two supported methods:
 
 - email/password
 - email/OTP
+
+There is no `?next=` return-to parameter yet — a logged-out deep link always
+lands on `/` after login. Known deferral: add it when the app has more than
+one protected destination, and validate it as a relative path to avoid an
+open redirect.
 
 Use Datastar from the first pass for login method switching, inline errors,
 loading states, OTP request status, and OTP verification status. Successful auth
@@ -41,7 +47,8 @@ timing where it is reasonable to avoid them.
 
 - `POST /auth/login/otp/request` accepts email.
 - If the email maps to an enabled OTP credential, create a JetStream-backed OTP
-  challenge and send the code.
+  challenge and send the code asynchronously (the handler must not wait on
+  SMTP; see doc 04 on enumeration timing).
 - Always render a generic "check your email" response.
 - `POST /auth/login/otp/verify` accepts email and code.
 - Verify the latest usable challenge hash, expiry, consumed state, and attempt
@@ -58,7 +65,8 @@ JetStream.
 - `GET /auth/forgot-password` renders the reset request page.
 - `POST /auth/forgot-password` accepts email.
 - If a password credential exists, create a short-lived JetStream-backed reset
-  token and send a reset link.
+  token and send a reset link asynchronously (same SMTP-timing rule as OTP
+  requests).
 - Always render a generic response.
 - `GET /auth/reset-password?token=...` validates the token enough to render the
   reset form.
@@ -94,6 +102,11 @@ Protected:
 - `POST /auth/logout`
 
 Logout should be protected because it mutates the current authenticated session.
+
+When auth fails on a protected route, the response channel must match the
+client: a normal navigation gets a 303 to `/auth/login`, but a Datastar
+request (`Datastar-Request: true`) gets an SSE redirect event — fetch would
+follow a 303 into login-page HTML and fail silently instead of navigating.
 
 ---
 

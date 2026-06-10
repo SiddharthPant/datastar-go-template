@@ -13,18 +13,29 @@ import (
 const pidAlphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
 const pidSize = 16
 
+// NewPID generates a prefixed NanoID-style public ID following the same
+// prefix, size, alphabet, and mask-and-reject sampling rules as the
+// prefixed_nanoid() SQL helper in 00001_init.sql.
 func NewPID(prefix string) (string, error) {
-	buf := make([]byte, pidSize)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("read random pid bytes: %w", err)
-	}
+	const mask = 63 // smallest 2^n-1 >= len(pidAlphabet)-1
+	out := make([]byte, 0, pidSize)
+	buf := make([]byte, pidSize*2)
 
-	out := make([]byte, pidSize)
-	for i, b := range buf {
-		out[i] = pidAlphabet[int(b)%len(pidAlphabet)]
+	for {
+		if _, err := rand.Read(buf); err != nil {
+			return "", fmt.Errorf("read random pid bytes: %w", err)
+		}
+		for _, b := range buf {
+			idx := int(b) & mask
+			if idx >= len(pidAlphabet) {
+				continue
+			}
+			out = append(out, pidAlphabet[idx])
+			if len(out) == pidSize {
+				return prefix + "_" + string(out), nil
+			}
+		}
 	}
-
-	return prefix + "_" + string(out), nil
 }
 ```
 
@@ -66,32 +77,23 @@ func NewOTPCode() (string, error) {
 
 ## 3. Add `internal/auth/password.go`
 
+PHC-format encoding, decoding, salting, and constant-time comparison are owned
+by `github.com/alexedwards/argon2id`; this file owns only the project policy:
+parameters, minimum length, and the dummy verification used to equalize login
+timing.
+
 ```go
 package auth
 
 import (
-	"crypto/rand"
-	"crypto/subtle"
-	"encoding/base64"
-	"errors"
 	"fmt"
-	"strconv"
-	"strings"
 	"sync"
 	"unicode/utf8"
 
-	"golang.org/x/crypto/argon2"
+	"github.com/alexedwards/argon2id"
 )
 
-type PasswordParams struct {
-	Memory      uint32
-	Iterations  uint32
-	Parallelism uint8
-	SaltLength  uint32
-	KeyLength   uint32
-}
-
-var DefaultPasswordParams = PasswordParams{
+var passwordParams = &argon2id.Params{
 	Memory:      64 * 1024,
 	Iterations:  3,
 	Parallelism: 2,
@@ -99,28 +101,15 @@ var DefaultPasswordParams = PasswordParams{
 	KeyLength:   32,
 }
 
-// MinPasswordLength is the minimum password length the server enforces.
-//
-// The login and reset forms also set minlength="12" in their HTML, but that is
-// only a hint for real browsers: a direct POST (curl, a script, a tampered
-// page, a non-browser client) bypasses it completely. The server must enforce
-// the same rule itself, so that no flow can ever store a weak or empty
-// password.
+// MinPasswordLength is enforced server-side; the HTML minlength attribute is
+// only a browser convenience and is bypassed by any direct POST.
 const MinPasswordLength = 12
 
-// ErrPasswordTooShort is returned by ValidatePassword. It is a package-level
-// sentinel so callers can detect it with errors.Is and show a specific,
-// non-generic message ("password too short" is not sensitive information).
 var ErrPasswordTooShort = fmt.Errorf("password must be at least %d characters", MinPasswordLength)
 
-// ValidatePassword enforces the server-side password policy. Call it in EVERY
-// flow that accepts a user-chosen password before hashing it -- password reset
-// today, and any future registration or change-password flow -- and call it
-// before consuming any one-time token, so a rejected password does not burn the
-// user's reset link.
-//
-// We count runes rather than bytes so a 12-character password made of
-// multi-byte characters is not wrongly rejected.
+// ValidatePassword enforces the server-side password policy. Call it in every
+// flow that accepts a user-chosen password, before consuming any one-time
+// token. Length is counted in runes, not bytes.
 func ValidatePassword(password string) error {
 	if utf8.RuneCountInString(password) < MinPasswordLength {
 		return ErrPasswordTooShort
@@ -129,144 +118,40 @@ func ValidatePassword(password string) error {
 }
 
 func HashPassword(password string) (string, error) {
-	return HashPasswordWithParams(password, DefaultPasswordParams)
-}
-
-func HashPasswordWithParams(password string, params PasswordParams) (string, error) {
-	salt := make([]byte, params.SaltLength)
-	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("read password salt: %w", err)
-	}
-
-	key := argon2.IDKey(
-		[]byte(password),
-		salt,
-		params.Iterations,
-		params.Memory,
-		params.Parallelism,
-		params.KeyLength,
-	)
-
-	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
-	b64Key := base64.RawStdEncoding.EncodeToString(key)
-	return fmt.Sprintf(
-		"$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
-		params.Memory,
-		params.Iterations,
-		params.Parallelism,
-		b64Salt,
-		b64Key,
-	), nil
+	return argon2id.CreateHash(password, passwordParams)
 }
 
 func VerifyPassword(password, encoded string) (bool, error) {
-	params, salt, expected, err := decodePasswordHash(encoded)
-	if err != nil {
-		return false, err
-	}
-
-	actual := argon2.IDKey(
-		[]byte(password),
-		salt,
-		params.Iterations,
-		params.Memory,
-		params.Parallelism,
-		uint32(len(expected)),
-	)
-
-	return subtle.ConstantTimeCompare(actual, expected) == 1, nil
+	return argon2id.ComparePasswordAndHash(password, encoded)
 }
 
-// dummyHash holds a throwaway Argon2id hash built once on first use. It backs
-// VerifyDummyPassword below.
-var (
-	dummyHashOnce sync.Once
-	dummyHash     string
-)
-
-// VerifyDummyPassword runs the full Argon2id verification path against a
-// throwaway hash and discards the result. Its only purpose is to BURN TIME.
-//
-// Why this exists: a password login for a real email runs one Argon2id
-// computation (tens of milliseconds); a login for an email that has no account
-// would otherwise return immediately with no hashing at all. That timing
-// difference lets an attacker enumerate which emails are registered just by
-// measuring response latency. Calling this on the "no such user" (and
-// "credential disabled") branch makes both cases take roughly the same time.
-//
-// The dummy hash is computed once, lazily, using DefaultPasswordParams so its
-// cost matches a real verification. If that one-time setup ever fails we leave
-// dummyHash empty and this becomes a cheap no-op -- that only weakens the
-// timing defense, it never blocks a login.
-func VerifyDummyPassword(password string) {
-	dummyHashOnce.Do(func() {
-		buf := make([]byte, 32)
-		if _, err := rand.Read(buf); err != nil {
-			return
-		}
-		h, err := HashPassword(base64.RawStdEncoding.EncodeToString(buf))
-		if err != nil {
-			return
-		}
-		dummyHash = h
-	})
-	if dummyHash == "" {
-		return
-	}
-	_, _ = VerifyPassword(password, dummyHash)
-}
-
+// PasswordNeedsRehash reports whether a stored hash was created with outdated
+// parameters and should be rehashed on the next successful verification.
 func PasswordNeedsRehash(encoded string) bool {
-	params, _, _, err := decodePasswordHash(encoded)
+	params, _, _, err := argon2id.DecodeHash(encoded)
 	if err != nil {
 		return true
 	}
-	return params.Memory != DefaultPasswordParams.Memory ||
-		params.Iterations != DefaultPasswordParams.Iterations ||
-		params.Parallelism != DefaultPasswordParams.Parallelism
+	return params.Memory != passwordParams.Memory ||
+		params.Iterations != passwordParams.Iterations ||
+		params.Parallelism != passwordParams.Parallelism
 }
 
-func decodePasswordHash(encoded string) (PasswordParams, []byte, []byte, error) {
-	parts := strings.Split(encoded, "$")
-	if len(parts) != 6 {
-		return PasswordParams{}, nil, nil, errors.New("invalid password hash format")
-	}
-	if parts[1] != "argon2id" || parts[2] != "v=19" {
-		return PasswordParams{}, nil, nil, errors.New("unsupported password hash")
-	}
-
-	params := PasswordParams{}
-	for _, item := range strings.Split(parts[3], ",") {
-		kv := strings.SplitN(item, "=", 2)
-		if len(kv) != 2 {
-			return PasswordParams{}, nil, nil, errors.New("invalid password params")
-		}
-		n, err := strconv.ParseUint(kv[1], 10, 32)
-		if err != nil {
-			return PasswordParams{}, nil, nil, fmt.Errorf("parse password param %q: %w", kv[0], err)
-		}
-		switch kv[0] {
-		case "m":
-			params.Memory = uint32(n)
-		case "t":
-			params.Iterations = uint32(n)
-		case "p":
-			params.Parallelism = uint8(n)
-		}
-	}
-
-	salt, err := base64.RawStdEncoding.DecodeString(parts[4])
+var dummyHash = sync.OnceValue(func() string {
+	hash, err := argon2id.CreateHash("dummy-timing-equalizer", passwordParams)
 	if err != nil {
-		return PasswordParams{}, nil, nil, fmt.Errorf("decode password salt: %w", err)
+		return ""
 	}
-	key, err := base64.RawStdEncoding.DecodeString(parts[5])
-	if err != nil {
-		return PasswordParams{}, nil, nil, fmt.Errorf("decode password key: %w", err)
-	}
+	return hash
+})
 
-	params.SaltLength = uint32(len(salt))
-	params.KeyLength = uint32(len(key))
-	return params, salt, key, nil
+// VerifyDummyPassword burns the same time as a real verification. Call it on
+// the no-account and disabled-credential login paths so response latency does
+// not reveal whether an email is registered.
+func VerifyDummyPassword(password string) {
+	if hash := dummyHash(); hash != "" {
+		_, _ = argon2id.ComparePasswordAndHash(password, hash)
+	}
 }
 ```
 
@@ -337,7 +222,12 @@ func sameHost(a, b string) bool {
 }
 ```
 
-## 5. Add `internal/auth/rate_limiter.go`
+## 5. Add `internal/auth/kv.go`
+
+Every optimistic-concurrency read-modify-write against JetStream KV — rate
+limit counters, OTP attempt counting, session revocation, reset-token
+consumption — goes through this one helper, so the bounded-retry,
+conflicts-only, fail-closed invariant is enforced in a single place.
 
 ```go
 package auth
@@ -347,6 +237,79 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/nats-io/nats.go/jetstream"
+)
+
+const casMaxAttempts = 5
+
+// ErrCASContention is returned when a CASUpdate cannot settle within its
+// retry budget. Callers must fail closed.
+var ErrCASContention = errors.New("kv update contention")
+
+// CASUpdate runs a bounded optimistic-concurrency read-modify-write on key.
+// apply mutates the decoded value; returning an error from apply aborts
+// without writing. A missing key returns jetstream.ErrKeyNotFound unless
+// create is true, in which case apply starts from the zero value. Only lost
+// revision races are retried; any other KV error returns immediately.
+func CASUpdate[T any](ctx context.Context, kv jetstream.KeyValue, key string, create bool, apply func(*T) error) (T, error) {
+	var zero T
+	for attempt := 0; attempt < casMaxAttempts; attempt++ {
+		entry, err := kv.Get(ctx, key)
+		if errors.Is(err, jetstream.ErrKeyNotFound) {
+			if !create {
+				return zero, err
+			}
+			var value T
+			if err := apply(&value); err != nil {
+				return zero, err
+			}
+			payload, err := json.Marshal(value)
+			if err != nil {
+				return zero, fmt.Errorf("encode kv value: %w", err)
+			}
+			if _, err := kv.Create(ctx, key, payload); err != nil {
+				if errors.Is(err, jetstream.ErrKeyExists) {
+					continue
+				}
+				return zero, fmt.Errorf("create kv value: %w", err)
+			}
+			return value, nil
+		}
+		if err != nil {
+			return zero, fmt.Errorf("get kv value: %w", err)
+		}
+
+		var value T
+		if err := json.Unmarshal(entry.Value(), &value); err != nil {
+			return zero, fmt.Errorf("decode kv value: %w", err)
+		}
+		if err := apply(&value); err != nil {
+			return zero, err
+		}
+		payload, err := json.Marshal(value)
+		if err != nil {
+			return zero, fmt.Errorf("encode kv value: %w", err)
+		}
+		if _, err := kv.Update(ctx, key, payload, entry.Revision()); err != nil {
+			// Conflict sentinels vary across nats.go versions; the bounded
+			// loop makes retrying any Update error safe.
+			continue
+		}
+		return value, nil
+	}
+	return zero, ErrCASContention
+}
+```
+
+## 6. Add `internal/auth/rate_limiter.go`
+
+```go
+package auth
+
+import (
+	"context"
+	"errors"
 	"time"
 
 	"github.com/nats-io/nats.go/jetstream"
@@ -366,86 +329,30 @@ func NewRateLimiter(kv jetstream.KeyValue) *RateLimiter {
 	return &RateLimiter{kv: kv, now: time.Now}
 }
 
-// Allow records one hit against `key` and reports whether the caller is still
-// under `limit` for the current `window`.
-//
-// The counter lives in JetStream KV and is updated with optimistic
-// concurrency: we read the current value together with its revision number,
-// compute the next value, and write it back only if the revision has not
-// changed in the meantime. When two requests for the same key race, one write
-// wins and the other gets a conflict; the loser re-reads and tries again.
-//
-// Two things matter here, and the first version of this code got both wrong by
-// calling `Allow` recursively on any failure:
-//
-//  1. Retries must be BOUNDED. An unbounded retry (recursion or an infinite
-//     loop) turns a permanent failure -- NATS down, context cancelled, a
-//     malformed entry -- into a hang or a stack overflow.
-//  2. Only a *revision conflict* should be retried. Any other error means the
-//     KV operation itself failed and retrying it will just fail again, so we
-//     return it straight away.
-//
-// `maxAttempts` is small because real contention resolves in one or two
-// retries; if we somehow exhaust it we fail CLOSED (return `false`), so a
-// pathologically hot key can never be used to slip past the limit.
+// Allow records one hit against key and reports whether the caller is still
+// under limit for the current window. Contention beyond the CAS retry budget
+// fails closed.
 func (l *RateLimiter) Allow(ctx context.Context, key string, limit int, window time.Duration) (bool, error) {
-	const maxAttempts = 5
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		now := l.now().UTC()
-		entry, err := l.kv.Get(ctx, key)
-		if errors.Is(err, jetstream.ErrKeyNotFound) {
-			// First hit in this window: create the counter at 1. If another
-			// request created it first we lose the race -- re-read and retry.
-			payload, err := json.Marshal(rateLimitEntry{Count: 1, ResetAt: now.Add(window)})
-			if err != nil {
-				return false, fmt.Errorf("encode rate limit: %w", err)
-			}
-			if _, err := l.kv.Create(ctx, key, payload); err != nil {
-				if errors.Is(err, jetstream.ErrKeyExists) {
-					continue
-				}
-				return false, fmt.Errorf("create rate limit: %w", err)
-			}
-			return true, nil
+	now := l.now().UTC()
+	entry, err := CASUpdate(ctx, l.kv, key, true, func(e *rateLimitEntry) error {
+		if now.After(e.ResetAt) {
+			*e = rateLimitEntry{Count: 1, ResetAt: now.Add(window)}
+			return nil
 		}
-		if err != nil {
-			return false, fmt.Errorf("get rate limit: %w", err)
-		}
-
-		var current rateLimitEntry
-		if err := json.Unmarshal(entry.Value(), &current); err != nil {
-			return false, fmt.Errorf("decode rate limit: %w", err)
-		}
-
-		if now.After(current.ResetAt) {
-			current = rateLimitEntry{Count: 1, ResetAt: now.Add(window)}
-		} else {
-			current.Count++
-		}
-
-		payload, err := json.Marshal(current)
-		if err != nil {
-			return false, fmt.Errorf("encode rate limit: %w", err)
-		}
-		if _, err := l.kv.Update(ctx, key, payload, entry.Revision()); err != nil {
-			// A revision mismatch means a concurrent request updated the key
-			// between our Get and Update -- re-read and retry. We retry on any
-			// Update error here (rather than matching a specific conflict
-			// sentinel) because the conflict error type differs across nats.go
-			// versions; the bounded loop keeps that safe. If your nats.go
-			// version exports a wrong-revision sentinel, prefer matching it and
-			// returning other errors immediately.
-			continue
-		}
-
-		return current.Count <= limit, nil
+		e.Count++
+		return nil
+	})
+	if errors.Is(err, ErrCASContention) {
+		return false, nil
 	}
-	// Too much contention on this key to settle within maxAttempts. Fail closed.
-	return false, nil
+	if err != nil {
+		return false, err
+	}
+	return entry.Count <= limit, nil
 }
 ```
 
-## 6. Add `natsx/auth.go`
+## 7. Add `natsx/auth.go`
 
 ```go
 package natsx
@@ -527,7 +434,7 @@ func (c *Client) AuthStores(ctx context.Context) (*AuthStores, error) {
 }
 ```
 
-## 7. Update `natsx/jetstream.go`
+## 8. Update `natsx/jetstream.go`
 
 Call auth setup at the end of `EnsureStreams`:
 
