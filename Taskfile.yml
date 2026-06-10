@@ -25,12 +25,14 @@ tasks:
       - "**/*.templ.go"
   
   debug:
+    desc: Debug the web server
     cmds:
       - go tool dlv exec ./bin/main
     deps:
       - build
   
   live:templ:
+    desc: Watch .templ files and regenerate on change
     cmds:
       - go tool templ generate --watch
 
@@ -40,6 +42,7 @@ tasks:
       - go tool templ generate --watch
 
   live:server:
+    desc: Run the web server with hot reload
     cmds:
       - |
         go tool air \
@@ -49,6 +52,7 @@ tasks:
         -misc.clean_on_exit true
   
   live:
+    desc: Run the web server with hot reload and templ generation
     deps:
       - live:templ
       - live:server
@@ -96,3 +100,20 @@ tasks:
     desc: Seed local org/team/user data
     cmds:
       - go run ./cmd/seed
+
+  db:reset:
+    desc: Drop, recreate, migrate, and seed the local DATABASE_URL
+    prompt: This will destroy all data in {{.POSTGRES_DB}}. Continue?
+    cmds:
+      - psql "$SQLC_DATABASE_URL" -c 'DROP DATABASE IF EXISTS "{{.POSTGRES_DB}}" WITH (FORCE)'
+      - psql "$SQLC_DATABASE_URL" -c 'CREATE DATABASE "{{.POSTGRES_DB}}"'
+      - task: db:migrate
+      - task: db:seed
+
+  db:nuke:
+    desc: Nuke DB container itself and start with a clean slate
+    prompt: This will nuke the DB instance and all data in {{.POSTGRES_DB}}. Continue?
+    cmds:
+      - docker compose down -v && docker compose up -d db
+      - task: db:migrate
+      - task: db:seed
