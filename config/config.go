@@ -2,19 +2,17 @@ package config
 
 import (
 	"log/slog"
-	"os"
 	"sync"
 	"time"
 )
 
 type Config struct {
-	AppEnv        Environment
-	Host          string
-	Port          string
-	LogLevel      slog.Level
-	SessionSecret string
-	AppBaseURL    string
-	SeedPassword  string
+	AppEnv       AppEnv
+	Host         string
+	Port         string
+	LogLevel     slog.Level
+	AppBaseURL   string
+	SeedPassword string
 
 	DatabaseURL      string
 	DBMaxConns       int
@@ -42,33 +40,25 @@ func init() {
 }
 
 func load() *Config {
-	env := &EnvLoader{}
-
 	config := &Config{
-		AppEnv:        env.appEnv("APP_ENV", "", true),
-		Host:          env.string("HOST", "", true),
-		Port:          env.string("PORT", "", true),
-		LogLevel:      env.slogLevel("LOG_LEVEL", slog.LevelInfo, false),
-		SessionSecret: env.string("SESSION_SECRET", "", true),
-		AppBaseURL:    env.string("APP_BASE_URL", "", true),
-		SeedPassword:  env.string("SEED_PASSWORD", "", true),
+		AppEnv:       GetAppEnv("APP_ENV"),
+		Host:         GetString("HOST"),
+		Port:         GetString("PORT"),
+		LogLevel:     GetSlogLevel("LOG_LEVEL"),
+		AppBaseURL:   GetString("APP_BASE_URL"),
+		SeedPassword: GetString("SEED_PASSWORD"),
 
-		DatabaseURL:      env.string("DATABASE_URL", "", true),
-		DBMaxConns:       env.int("DATABASE_MAX_CONNECTIONS", 10, false),
-		DBMinConns:       env.int("DATABASE_MIN_CONNECTIONS", 0, false),
-		DBConnectTimeout: env.duration("DATABASE_CONNECT_TIMEOUT", 5*time.Second, false),
-		DBIdleTimeout:    env.duration("DATABASE_IDLE_TIMEOUT", 30*time.Second, false),
+		DatabaseURL:        GetString("DATABASE_URL"),
+		DBMaxConns:         GetInt("DATABASE_MAX_CONNECTIONS"),
+		DBMinConns:         GetInt("DATABASE_MIN_CONNECTIONS"),
+		DBConnectTimeout:   GetDuration("DATABASE_CONNECT_TIMEOUT"),
+		DBIdleTimeout:      GetDuration("DATABASE_IDLE_TIMEOUT"),
+		NATSURL:            GetString("NATS_URL"),
+		NATSName:           GetString("NATS_NAME"),
+		NATSConnectTimeout: GetDuration("NATS_CONNECT_TIMEOUT"),
 
-		NATSURL:            env.string("NATS_URL", "", true),
-		NATSName:           env.string("NATS_NAME", "datastar-go", true),
-		NATSConnectTimeout: env.duration("NATS_CONNECT_TIMEOUT", 5*time.Second, true),
-
-		SMTPAddr: env.string("SMTP_ADDR", "", true),
-		SMTPFrom: env.string("SMTP_FROM", "", true),
-	}
-	if err := env.err(); err != nil {
-		slog.Error("failed to load config", "error", err)
-		os.Exit(1)
+		SMTPAddr: GetString("SMTP_ADDR"),
+		SMTPFrom: GetString("SMTP_FROM"),
 	}
 	return config
 }

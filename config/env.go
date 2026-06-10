@@ -1,110 +1,62 @@
 package config
 
 import (
-	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"time"
 )
 
-type Environment string
+type AppEnv string
 
 const (
-	Dev  Environment = "dev"
-	Prod Environment = "prod"
+	Dev  AppEnv = "dev"
+	Prod AppEnv = "prod"
 )
 
-type EnvLoader struct {
-	errs []error
-}
-
-func (e *EnvLoader) err() error {
-	return errors.Join(e.errs...)
-}
-
-func (e *EnvLoader) addErr(format string, args ...any) {
-	e.errs = append(e.errs, fmt.Errorf(format, args...))
-}
-
-func (e *EnvLoader) string(key string, fallback string, required bool) string {
+func GetString(key string) string {
 	value, ok := os.LookupEnv(key)
 	if ok && value != "" {
 		return value
 	}
-	if required {
-		e.addErr("required environment variable %s is not set", key)
-	}
-	slog.Warn("required environment variable is not set, using fallback", "key", key, "value", value, "fallback", fallback)
-	return fallback
+
+	slog.Error("required env var is not set", "envVar", key, "value", value)
+	panic(1)
 }
 
-func (e *EnvLoader) int(key string, fallback int, required bool) int {
-	value, ok := os.LookupEnv(key)
-	if ok && value != "" {
-		if intValue, err := strconv.Atoi(value); err == nil {
-			return intValue
-		}
-	}
-	if required {
-		e.addErr("required environment variable %s is not set", key)
-	}
-	slog.Warn("required environment variable is not set, using fallback", "key", key, "value", value, "fallback", fallback)
-	return fallback
+func GetInt(key string) int {
+	return parseValue(key, strconv.Atoi, "cannot parse required env var value to int")
 }
 
-func (e *EnvLoader) duration(key string, fallback time.Duration, required bool) time.Duration {
-	value, ok := os.LookupEnv(key)
-	if ok && value != "" {
-		if duration, err := time.ParseDuration(value); err == nil {
-			return duration
-		}
-	}
-	if required {
-		e.addErr("required environment variable %s is not set", key)
-	}
-	slog.Warn("required environment variable is not set, using fallback", "key", key, "value", value, "fallback", fallback)
-	return fallback
+func GetDuration(key string) time.Duration {
+	return parseValue(key, time.ParseDuration, "cannot parse required env var value to duration")
 }
 
-func (e *EnvLoader) bool(key string, fallback bool, required bool) bool {
-	value, ok := os.LookupEnv(key)
-	if ok && value != "" {
-		if boolValue, err := strconv.ParseBool(value); err == nil {
-			return boolValue
-		}
-	}
-	if required {
-		e.addErr("required environment variable %s is not set", key)
-	}
-	slog.Warn("required environment variable is not set, using fallback", "key", key, "value", value, "fallback", fallback)
-	return fallback
+func GetBool(key string) bool {
+	return parseValue(key, strconv.ParseBool, "cannot parse required env var value to bool")
 }
 
-func (e *EnvLoader) slogLevel(key string, fallback slog.Level, required bool) slog.Level {
-	value, ok := os.LookupEnv(key)
-	if ok && value != "" {
-		var level slog.Level
-		if err := level.UnmarshalText([]byte(value)); err == nil {
-			return level
-		}
+func parseValue[T any](key string, parser func(value string) (T, error), errorMessage string) T {
+	value := GetString(key)
+	parsedValue, err := parser(value)
+	if err == nil {
+		return parsedValue
 	}
-	if required {
-		e.addErr("required environment variable %s is not set", key)
-	}
-	slog.Warn("required environment variable is not set, using fallback", "key", key, "value", value, "fallback", fallback)
-	return fallback
+
+	slog.Error(errorMessage, "envVar", key, "value", value, "error", err.Error())
+	panic(1)
 }
 
-func (e *EnvLoader) appEnv(key string, fallback Environment, required bool) Environment {
-	value, ok := os.LookupEnv(key)
-	if ok && value != "" {
-		return Environment(value)
-	}
-	if required {
-		e.addErr("required environment variable %s is not set", key)
-	}
-	slog.Warn("required environment variable is not set, using fallback", "key", key, "value", value, "fallback", fallback)
-	return fallback
+func GetSlogLevel(key string) slog.Level {
+	var level slog.Level
+	return parseValue(key, func(rawValue string) (slog.Level, error) {
+		err := level.UnmarshalText([]byte(rawValue))
+		return level, err
+	}, "cannot parse required env var value to slog.Level")
+}
+
+func GetAppEnv(key string) AppEnv {
+	return parseValue(key, func(rawValue string) (AppEnv, error) {
+		return AppEnv(rawValue), nil
+	}, "cannot parse required env var value to AppEnv")
 }
