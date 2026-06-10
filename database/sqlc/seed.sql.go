@@ -13,15 +13,23 @@ import (
 
 const createPrincipal = `-- name: CreatePrincipal :one
 INSERT INTO
-    principals (kind)
+    principals (id, kind)
 VALUES
-    ($1::principal_kind)
+    ($1, $2::principal_kind)
+ON CONFLICT (id) DO UPDATE
+SET
+    kind = EXCLUDED.kind
 RETURNING
     id, pid, kind, disabled_at, auth_invalidated_at, created_at, updated_at
 `
 
-func (q *Queries) CreatePrincipal(ctx context.Context, kind PrincipalKind) (Principal, error) {
-	row := q.db.QueryRow(ctx, createPrincipal, kind)
+type CreatePrincipalParams struct {
+	ID   uuid.UUID     `db:"id" json:"id"`
+	Kind PrincipalKind `db:"kind" json:"kind"`
+}
+
+func (q *Queries) CreatePrincipal(ctx context.Context, arg CreatePrincipalParams) (Principal, error) {
+	row := q.db.QueryRow(ctx, createPrincipal, arg.ID, arg.Kind)
 	var i Principal
 	err := row.Scan(
 		&i.ID,

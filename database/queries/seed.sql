@@ -1,8 +1,11 @@
 -- name: CreatePrincipal :one
 INSERT INTO
-    principals (kind)
+    principals (id, kind)
 VALUES
-    (@kind::principal_kind)
+    (@id, @kind::principal_kind)
+ON CONFLICT (id) DO UPDATE
+SET
+    kind = EXCLUDED.kind
 RETURNING
     *;
 

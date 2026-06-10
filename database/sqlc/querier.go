@@ -9,7 +9,7 @@ import (
 )
 
 type Querier interface {
-	CreatePrincipal(ctx context.Context, kind PrincipalKind) (Principal, error)
+	CreatePrincipal(ctx context.Context, arg CreatePrincipalParams) (Principal, error)
 	HealthCheck(ctx context.Context) (string, error)
 	UpsertUserForSeed(ctx context.Context, arg UpsertUserForSeedParams) (User, error)
 }
