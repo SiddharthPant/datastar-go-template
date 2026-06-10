@@ -114,6 +114,6 @@ tasks:
     desc: Nuke DB container itself and start with a clean slate
     prompt: This will nuke the DB instance and all data in {{.POSTGRES_DB}}. Continue?
     cmds:
-      - docker compose down -v && docker compose up -d db
+      - docker compose down -v && docker compose up -d postgres --wait
       - task: db:migrate
       - task: db:seed
