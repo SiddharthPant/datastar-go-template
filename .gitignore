@@ -193,5 +193,4 @@ Temporary Items
 
 .env
 tmp/
-.task/*
-!.task/checksum/*
+.task/

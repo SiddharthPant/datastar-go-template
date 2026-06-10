@@ -7,7 +7,8 @@ tasks:
     desc: Format code and imports
     cmds:
       - go fmt
-      - go tool goimports -w .
+      - find . -name '*.go' -not -name '*_templ.go' -not -path './database/sqlc/*' -exec go tool goimports -w {} +
+
   dev:
     desc: Run the web server with local build tag + hot reload
     deps: [templ]
