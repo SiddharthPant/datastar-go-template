@@ -2,85 +2,94 @@
 
 ## Goal
 
-Add first-class seeders for orgs, teams, users, credentials, and memberships so
-new projects can be scaffolded with useful data without clicking through UI
-flows or hand-writing requests. Seeders should be deterministic, idempotent, and
-safe to run repeatedly in local development and test environments.
+Seed teams, users, and memberships so a fresh local database can be used to
+log in immediately and exercises every role's access shape. Seeding must be
+deterministic, idempotent, and safe to run repeatedly.
 
 ## Seeder Shape
 
-Add a dedicated command, for example:
+One self-contained command:
 
 ```sh
 go run ./cmd/seed
 task db:seed
 ```
 
-The command should read seed definitions from code or a small local fixture file
-and create:
+The seed data is a literal slice in `cmd/seed/main.go` — no fixture files, no
+separate seed package. With three tables there is nothing to abstract.
 
-- org scopes and `orgs`
-- team scopes and `teams`
-- principals and `users`
-- password credentials with Argon2id hashes
-- email OTP credentials
-- memberships that connect principals to org/team scopes
+The seeder creates:
 
-Do not seed sessions, OTP challenges, or password reset tokens. Those belong in
-JetStream as runtime auth state and should be created only through auth flows.
+- teams (upserted by hardcoded UUID)
+- users (upserted by hardcoded UUID), each with a real Argon2id hash of
+  `SEED_PASSWORD` produced by the same `internal/auth` helper production code
+  uses
+- team memberships (upserted by hardcoded UUID) wiring admins and members to
+  their teams — owners get none, their access is derived
 
-## Default Local Fixture
+Do not seed sessions, reset tokens, or rate-limit state. Those belong in
+JetStream as runtime auth state and are created only through auth flows.
 
-Start with a tiny local fixture that covers real dashboard development:
+## Determinism And Idempotency
 
-- one org
-- two teams in that org
-- one owner user
-- one admin user
-- one regular member user
-- password credentials for each user
-- OTP credentials for each user
-- memberships that exercise org-level and team-level access
+Every seeded row carries a hardcoded UUID literal in the seed slice, and every
+insert is `ON CONFLICT (id) DO UPDATE`. This is the pattern already settled on
+in the working tree:
 
-Use predictable emails such as `owner@example.test`, but generate secure
-password hashes through the same Argon2id helper used by production code. Local
-plaintext seed passwords may live only in fixture/config intended for local dev
-and tests.
+- IDs never depend on database defaults (`uuidv7()` is random per run), so
+  references between seed entries (`team_memberships.team_id` → `teams.id`)
+  are plain literals with no lookups
+- re-running the seeder converges the rows to the seed definition instead of
+  duplicating or skipping them
+- the upsert updates every non-key column, so editing a seed entry's name,
+  role, or membership propagates on the next run
 
-## Idempotency Rules
+The password hash is re-computed each run with a fresh random salt. That
+rewrites the `password_hash` column on every seed run, which is harmless: the
+password itself is unchanged, and seeds only run in dev/test.
 
-Seeders must be upsert-like and keyed by stable natural identifiers:
+The seeder also validates the member-one-team invariant (doc 01) before
+writing: a seed definition that gives a `member` two memberships fails fast
+with a clear error rather than planting data the service layer considers
+illegal.
 
-- org slug
-- team org plus team slug
-- user email
-- credential email
-- membership scope plus principal
+Wrap the whole run in one transaction so a failure midway leaves the database
+untouched.
 
-Running the seeder twice should not duplicate rows, rotate passwords
-unexpectedly, or change roles unless the seed definition explicitly asks for
-that update.
+## Default Seed Set
+
+One user per role, shaped to exercise each access pattern:
+
+- two teams: `platform` and `operations`
+- `owner@example.com` — role `owner`, **no membership rows**; sees both teams
+  through derived access
+- `admin@example.com` — role `admin`, members of **both** teams (exercises
+  multi-team membership)
+- `member@example.com` — role `member`, member of `platform` only (exercises
+  the one-team rule)
+
+All users share `SEED_PASSWORD` from config. Plaintext seed passwords exist
+only in local `.env`.
 
 ## Environment Safety
 
-Seed commands should refuse to run in production by default. Require an explicit
-environment check such as `APP_ENV=local`, `APP_ENV=dev`, or `APP_ENV=test`.
-
-If a future production bootstrap command is needed, make it separate and
-explicit, for example `cmd/bootstrap-admin`, so normal seed fixtures cannot
-accidentally create demo users in production.
+The seeder refuses to run when `config.Env.AppEnv == config.Prod` and exits
+non-zero. If a production bootstrap command is ever needed, make it a
+separate explicit command (e.g. `cmd/bootstrap-admin`) so dev fixtures cannot
+leak into production.
 
 ## Verification
 
 Seeder completion means:
 
-- migrations can run on an empty database;
-- `task db:seed` creates the default org/team/user graph;
-- running `task db:seed` again is a no-op or controlled update;
-- seeded users can log in with email/password;
-- seeded users can request email/OTP login;
-- dashboard access works immediately after seeding;
-- tests can use the same seeding package without depending on HTTP requests.
+- migrations apply on an empty database
+- `task db:seed` creates the team/user/membership set
+- running `task db:seed` twice leaves exactly the same rows (modulo
+  `password_hash` salt and `updated_at`)
+- seeded users can log in with email + `SEED_PASSWORD`
+- `TeamsForUser` returns both teams for the owner and the admin, and exactly
+  one team for the member
+- dashboard access works immediately after seeding
 
 ---
 

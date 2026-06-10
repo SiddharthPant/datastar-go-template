@@ -1,7 +1,7 @@
 # Implementation Code Map
 
-This is the paste-and-build section of the auth plan. It is written for a human
-implementing the scaffold manually, file by file.
+This is the paste-and-build section of the auth plan. It is written for a
+human implementing the scaffold manually, file by file.
 
 Use these docs in order:
 
@@ -12,52 +12,56 @@ Use these docs in order:
 
 ## Current State (2026-06-10)
 
-Implementation has started, so do not paste these docs blindly — reconcile each
-section against the working tree first:
+Implementation has started against the **old, richer schema**, so the first
+step is shrinking what exists — reconcile each section against the working
+tree, do not paste blindly:
 
-- `database/migrations/00001_init.sql` already contains the extensions and the
+- `database/migrations/00001_init.sql` contains the extensions and the
   `prefixed_nanoid` / `is_prefixed_pid` / `update_updated_at_column` helpers.
-- `database/migrations/00002_auth_identity.sql` already exists and creates the
-  full identity schema from doc 08.
-- `database/queries/auth.sql` was removed in commit 5e82b5e and must be
-  re-added; the working tree already has the matching `database/sqlc/auth.sql.go`
-  deletion pending.
-- `database/queries/seed.sql` and `cmd/seed/main.go` exist as WIP subsets and
-  should be replaced with the full versions in docs 08 and 11.
-- `features/auth` exists with a stub login page/handler (it logs the raw
-  password — replace it, do not extend it). Doc 10 replaces these files.
+  It is unchanged by this plan.
+- `database/migrations/00002_auth_identity.sql` is committed with the old
+  principal/scope/org/membership schema. Doc 08 §1 replaces it in place with
+  the three-table schema (`teams`, `users`, `team_memberships`); the local
+  database must then be rebuilt (`task db:nuke` or the drop/recreate reset
+  task).
+- `database/queries/seed.sql` and `cmd/seed/main.go` exist as WIP versions
+  that create principals. Docs 08 §3 and 11 §1 replace them. Keep their
+  established pattern: hardcoded UUID literals, `ON CONFLICT (id) DO
+  UPDATE`, one transaction.
+- `database/sqlc/` still contains generated code for the old schema
+  (enums, `Principal`, `Scope`, …). Regenerating after the migration/query
+  rewrite removes all of it.
+- `features/auth` exists with a stub login page/handler (the stub logs the
+  raw password — replace it, do not extend it). Doc 10 replaces these files.
 - `config/config.go` already has `AppBaseURL`, `SMTPAddr`, `SMTPFrom`, and
-  `SeedPassword` as **required** env vars, and `.env.example` already includes
-  them. The config API is `config.Env.<Field>` (not `config.Global`), and the
-  environment check is `config.Env.AppEnv == config.Prod`.
+  `SeedPassword` as **required** env vars, and `.env.example` includes them.
+  The config API is `config.Env.<Field>`, and the environment check is
+  `config.Env.AppEnv == config.Prod`.
 - Nullable `timestamptz` columns generate as `pgtype.Timestamptz` (check
-  `.Valid` / use `.Time`), not pointer types. Doc 10's service code is written
-  against this.
+  `.Valid` / use `.Time`); nullable uuid columns generate as `uuid.NullUUID`.
+  Docs 10 and 11 are written against this.
 
 Important constraints:
 
-- Use UUIDv7 for internal database IDs.
-- Use prefixed NanoID-style PIDs for UI/external references.
-- Do not create Postgres tables for sessions, OTP challenges, or password reset
-  tokens.
-- Store session state, OTP challenges, password reset tokens, auth rate limits,
-  and auth events in JetStream.
+- **No third-party dependencies.** Allowed: the standard library,
+  `golang.org/x/*` reference packages, and deps the project already has
+  (pgx/sqlc, chi, nats.go, templ, datastar-go, google/uuid). The only
+  `go.mod` change in this plan is promoting `golang.org/x/crypto` (already
+  in the module graph as an indirect dependency) to direct:
+
+  ```sh
+  go get golang.org/x/crypto
+  ```
+
+  An `x` package must also actually fit the requirement: `x/time/rate` was
+  evaluated for rate limiting and rejected because its in-memory state
+  cannot be shared through NATS (doc 04's table).
+- Use UUIDv7 for internal database IDs, prefixed NanoID-style PIDs for
+  UI/external references.
+- Do not create Postgres tables for sessions or password reset tokens; that
+  state lives in JetStream, along with rate limits and auth events.
 - Use Datastar from the first pass for auth interactions.
 - Regenerate `sqlc` and `templ` output after adding SQL or `.templ` files.
-
-The schema assumed this project was early enough that replacing the toy
-`users` table was acceptable; the committed `00002_auth_identity.sql` already
-did this.
-
-Before implementing the Go files, add the password hashing library (a thin,
-well-tested wrapper over `golang.org/x/crypto/argon2` that owns PHC encoding,
-decoding, and constant-time comparison) and the embedded NATS server used by
-the JetStream tests:
-
-```sh
-go get github.com/alexedwards/argon2id
-go get github.com/nats-io/nats-server/v2
-```
 
 ---
 
