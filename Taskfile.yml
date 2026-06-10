@@ -3,6 +3,11 @@ version: "3"
 dotenv: [".env"]            # loads DATABASE_URL et al. into task envs
 
 tasks:
+  fmt:
+    desc: Format code and imports
+    cmds:
+      - go fmt
+      - go tool goimports -w .
   dev:
     desc: Run the web server with local build tag + hot reload
     deps: [templ]
