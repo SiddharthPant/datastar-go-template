@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"datastar-go/config"
 	"datastar-go/database"
 	"datastar-go/database/sqlc"
 	"fmt"
@@ -13,6 +14,10 @@ import (
 )
 
 func main() {
+	if config.Env.AppEnv == config.Prod {
+		slog.Error("refusing to seed in prod")
+		os.Exit(1)
+	}
 	ctx := context.Background()
 
 	db, err := database.New(ctx)
