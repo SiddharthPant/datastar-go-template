@@ -11,32 +11,66 @@ import (
 	"github.com/google/uuid"
 )
 
-const createPrincipal = `-- name: CreatePrincipal :one
+const upsertTeamForSeed = `-- name: UpsertTeamForSeed :one
 INSERT INTO
-    principals (id, kind)
+    teams (id, name, slug)
 VALUES
-    ($1, $2::principal_kind)
-ON CONFLICT (id) DO UPDATE
+    ($1, $2, $3)
+ON CONFLICT (slug) DO UPDATE
 SET
-    kind = EXCLUDED.kind
+    name = EXCLUDED.name,
+    slug = EXCLUDED.slug
 RETURNING
-    id, pid, kind, disabled_at, auth_invalidated_at, created_at, updated_at
+    id, pid, name, slug, created_at, updated_at
 `
 
-type CreatePrincipalParams struct {
-	ID   uuid.UUID     `db:"id" json:"id"`
-	Kind PrincipalKind `db:"kind" json:"kind"`
+type UpsertTeamForSeedParams struct {
+	ID   uuid.UUID `db:"id" json:"id"`
+	Name string    `db:"name" json:"name"`
+	Slug string    `db:"slug" json:"slug"`
 }
 
-func (q *Queries) CreatePrincipal(ctx context.Context, arg CreatePrincipalParams) (Principal, error) {
-	row := q.db.QueryRow(ctx, createPrincipal, arg.ID, arg.Kind)
-	var i Principal
+func (q *Queries) UpsertTeamForSeed(ctx context.Context, arg UpsertTeamForSeedParams) (Team, error) {
+	row := q.db.QueryRow(ctx, upsertTeamForSeed, arg.ID, arg.Name, arg.Slug)
+	var i Team
 	err := row.Scan(
 		&i.ID,
 		&i.Pid,
-		&i.Kind,
-		&i.DisabledAt,
-		&i.AuthInvalidatedAt,
+		&i.Name,
+		&i.Slug,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertTeamMembershipForSeed = `-- name: UpsertTeamMembershipForSeed :one
+INSERT INTO
+    team_memberships (id, team_id, user_id)
+VALUES
+    ($1, $2, $3)
+ON CONFLICT (id) DO UPDATE
+SET
+    team_id = EXCLUDED.team_id,
+    user_id = EXCLUDED.user_id
+RETURNING
+    id, pid, team_id, user_id, created_at, updated_at
+`
+
+type UpsertTeamMembershipForSeedParams struct {
+	ID     uuid.UUID `db:"id" json:"id"`
+	TeamID uuid.UUID `db:"team_id" json:"teamId"`
+	UserID uuid.UUID `db:"user_id" json:"userId"`
+}
+
+func (q *Queries) UpsertTeamMembershipForSeed(ctx context.Context, arg UpsertTeamMembershipForSeedParams) (TeamMembership, error) {
+	row := q.db.QueryRow(ctx, upsertTeamMembershipForSeed, arg.ID, arg.TeamID, arg.UserID)
+	var i TeamMembership
+	err := row.Scan(
+		&i.ID,
+		&i.Pid,
+		&i.TeamID,
+		&i.UserID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -45,39 +79,46 @@ func (q *Queries) CreatePrincipal(ctx context.Context, arg CreatePrincipalParams
 
 const upsertUserForSeed = `-- name: UpsertUserForSeed :one
 INSERT INTO
-    users (principal_id, email, name, is_staff)
+    users (id, email, name, role, password_hash)
 VALUES
-    ($1, $2, $3, $4)
-ON CONFLICT (email) DO UPDATE
+    ($1, $2, $3, $4, $5)
+ON CONFLICT (id) DO UPDATE
 SET
+    email = EXCLUDED.email,
     name = EXCLUDED.name,
-    is_staff = EXCLUDED.is_staff
+    role = EXCLUDED.role,
+    password_hash = EXCLUDED.password_hash
 RETURNING
-    id, pid, principal_id, email, name, is_staff, created_at, updated_at
+    id, pid, email, name, role, password_hash, password_updated_at, disabled_at, auth_invalidated_at, created_at, updated_at
 `
 
 type UpsertUserForSeedParams struct {
-	PrincipalID uuid.UUID `db:"principal_id" json:"principalId"`
-	Email       string    `db:"email" json:"email"`
-	Name        string    `db:"name" json:"name"`
-	IsStaff     bool      `db:"is_staff" json:"isStaff"`
+	ID           uuid.UUID `db:"id" json:"id"`
+	Email        string    `db:"email" json:"email"`
+	Name         string    `db:"name" json:"name"`
+	Role         UserRole  `db:"role" json:"role"`
+	PasswordHash *string   `db:"password_hash" json:"passwordHash"`
 }
 
 func (q *Queries) UpsertUserForSeed(ctx context.Context, arg UpsertUserForSeedParams) (User, error) {
 	row := q.db.QueryRow(ctx, upsertUserForSeed,
-		arg.PrincipalID,
+		arg.ID,
 		arg.Email,
 		arg.Name,
-		arg.IsStaff,
+		arg.Role,
+		arg.PasswordHash,
 	)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Pid,
-		&i.PrincipalID,
 		&i.Email,
 		&i.Name,
-		&i.IsStaff,
+		&i.Role,
+		&i.PasswordHash,
+		&i.PasswordUpdatedAt,
+		&i.DisabledAt,
+		&i.AuthInvalidatedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

@@ -9,8 +9,9 @@ import (
 )
 
 type Querier interface {
-	CreatePrincipal(ctx context.Context, arg CreatePrincipalParams) (Principal, error)
 	HealthCheck(ctx context.Context) (string, error)
+	UpsertTeamForSeed(ctx context.Context, arg UpsertTeamForSeedParams) (Team, error)
+	UpsertTeamMembershipForSeed(ctx context.Context, arg UpsertTeamMembershipForSeedParams) (TeamMembership, error)
 	UpsertUserForSeed(ctx context.Context, arg UpsertUserForSeedParams) (User, error)
 }
 

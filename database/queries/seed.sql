@@ -1,22 +1,37 @@
--- name: CreatePrincipal :one
+-- name: UpsertUserForSeed :one
 INSERT INTO
-    principals (id, kind)
+    users (id, email, name, role, password_hash)
 VALUES
-    (@id, @kind::principal_kind)
+    (@id, @email, @name, @role, @password_hash)
 ON CONFLICT (id) DO UPDATE
 SET
-    kind = EXCLUDED.kind
+    email = EXCLUDED.email,
+    name = EXCLUDED.name,
+    role = EXCLUDED.role,
+    password_hash = EXCLUDED.password_hash
 RETURNING
     *;
 
--- name: UpsertUserForSeed :one
+-- name: UpsertTeamForSeed :one
 INSERT INTO
-    users (principal_id, email, name, is_staff)
+    teams (id, name, slug)
 VALUES
-    (@principal_id, @email, @name, @is_staff)
-ON CONFLICT (email) DO UPDATE
+    (@id, @name, @slug)
+ON CONFLICT (slug) DO UPDATE
 SET
     name = EXCLUDED.name,
-    is_staff = EXCLUDED.is_staff
+    slug = EXCLUDED.slug
+RETURNING
+    *;
+
+-- name: UpsertTeamMembershipForSeed :one
+INSERT INTO
+    team_memberships (id, team_id, user_id)
+VALUES
+    (@id, @team_id, @user_id)
+ON CONFLICT (id) DO UPDATE
+SET
+    team_id = EXCLUDED.team_id,
+    user_id = EXCLUDED.user_id
 RETURNING
     *;

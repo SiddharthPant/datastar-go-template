@@ -12,204 +12,77 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type MembershipRole string
+type UserRole string
 
 const (
-	MembershipRoleOwner  MembershipRole = "owner"
-	MembershipRoleAdmin  MembershipRole = "admin"
-	MembershipRoleMember MembershipRole = "member"
-	MembershipRoleViewer MembershipRole = "viewer"
+	UserRoleOwner  UserRole = "owner"
+	UserRoleAdmin  UserRole = "admin"
+	UserRoleMember UserRole = "member"
 )
 
-func (e *MembershipRole) Scan(src interface{}) error {
+func (e *UserRole) Scan(src interface{}) error {
 	switch s := src.(type) {
 	case []byte:
-		*e = MembershipRole(s)
+		*e = UserRole(s)
 	case string:
-		*e = MembershipRole(s)
+		*e = UserRole(s)
 	default:
-		return fmt.Errorf("unsupported scan type for MembershipRole: %T", src)
+		return fmt.Errorf("unsupported scan type for UserRole: %T", src)
 	}
 	return nil
 }
 
-type NullMembershipRole struct {
-	MembershipRole MembershipRole `json:"membershipRole"`
-	Valid          bool           `json:"valid"` // Valid is true if MembershipRole is not NULL
+type NullUserRole struct {
+	UserRole UserRole `json:"userRole"`
+	Valid    bool     `json:"valid"` // Valid is true if UserRole is not NULL
 }
 
 // Scan implements the Scanner interface.
-func (ns *NullMembershipRole) Scan(value interface{}) error {
+func (ns *NullUserRole) Scan(value interface{}) error {
 	if value == nil {
-		ns.MembershipRole, ns.Valid = "", false
+		ns.UserRole, ns.Valid = "", false
 		return nil
 	}
 	ns.Valid = true
-	return ns.MembershipRole.Scan(value)
+	return ns.UserRole.Scan(value)
 }
 
 // Value implements the driver Valuer interface.
-func (ns NullMembershipRole) Value() (driver.Value, error) {
+func (ns NullUserRole) Value() (driver.Value, error) {
 	if !ns.Valid {
 		return nil, nil
 	}
-	return string(ns.MembershipRole), nil
+	return string(ns.UserRole), nil
 }
 
-type PrincipalKind string
-
-const (
-	PrincipalKindUser           PrincipalKind = "user"
-	PrincipalKindServiceAccount PrincipalKind = "service_account"
-)
-
-func (e *PrincipalKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = PrincipalKind(s)
-	case string:
-		*e = PrincipalKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for PrincipalKind: %T", src)
-	}
-	return nil
-}
-
-type NullPrincipalKind struct {
-	PrincipalKind PrincipalKind `json:"principalKind"`
-	Valid         bool          `json:"valid"` // Valid is true if PrincipalKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullPrincipalKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.PrincipalKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.PrincipalKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullPrincipalKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.PrincipalKind), nil
-}
-
-type ScopeKind string
-
-const (
-	ScopeKindOrg  ScopeKind = "org"
-	ScopeKindTeam ScopeKind = "team"
-)
-
-func (e *ScopeKind) Scan(src interface{}) error {
-	switch s := src.(type) {
-	case []byte:
-		*e = ScopeKind(s)
-	case string:
-		*e = ScopeKind(s)
-	default:
-		return fmt.Errorf("unsupported scan type for ScopeKind: %T", src)
-	}
-	return nil
-}
-
-type NullScopeKind struct {
-	ScopeKind ScopeKind `json:"scopeKind"`
-	Valid     bool      `json:"valid"` // Valid is true if ScopeKind is not NULL
-}
-
-// Scan implements the Scanner interface.
-func (ns *NullScopeKind) Scan(value interface{}) error {
-	if value == nil {
-		ns.ScopeKind, ns.Valid = "", false
-		return nil
-	}
-	ns.Valid = true
-	return ns.ScopeKind.Scan(value)
-}
-
-// Value implements the driver Valuer interface.
-func (ns NullScopeKind) Value() (driver.Value, error) {
-	if !ns.Valid {
-		return nil, nil
-	}
-	return string(ns.ScopeKind), nil
-}
-
-type Membership struct {
-	ID          uuid.UUID          `db:"id" json:"id"`
-	Pid         string             `db:"pid" json:"pid"`
-	ScopeID     uuid.UUID          `db:"scope_id" json:"scopeId"`
-	PrincipalID uuid.UUID          `db:"principal_id" json:"principalId"`
-	Role        MembershipRole     `db:"role" json:"role"`
-	JoinedAt    pgtype.Timestamptz `db:"joined_at" json:"joinedAt"`
-	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"createdAt"`
-	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
-}
-
-type Org struct {
+type Team struct {
 	ID        uuid.UUID          `db:"id" json:"id"`
 	Pid       string             `db:"pid" json:"pid"`
-	ScopeID   uuid.UUID          `db:"scope_id" json:"scopeId"`
 	Name      string             `db:"name" json:"name"`
 	Slug      string             `db:"slug" json:"slug"`
 	CreatedAt pgtype.Timestamptz `db:"created_at" json:"createdAt"`
 	UpdatedAt pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
 }
 
-type PasswordCredential struct {
-	ID                uuid.UUID          `db:"id" json:"id"`
-	Pid               string             `db:"pid" json:"pid"`
-	PrincipalID       uuid.UUID          `db:"principal_id" json:"principalId"`
-	PasswordHash      string             `db:"password_hash" json:"passwordHash"`
-	PasswordUpdatedAt pgtype.Timestamptz `db:"password_updated_at" json:"passwordUpdatedAt"`
-	DisabledAt        pgtype.Timestamptz `db:"disabled_at" json:"disabledAt"`
-	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"createdAt"`
-	UpdatedAt         pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
-}
-
-type Principal struct {
-	ID                uuid.UUID          `db:"id" json:"id"`
-	Pid               string             `db:"pid" json:"pid"`
-	Kind              PrincipalKind      `db:"kind" json:"kind"`
-	DisabledAt        pgtype.Timestamptz `db:"disabled_at" json:"disabledAt"`
-	AuthInvalidatedAt pgtype.Timestamptz `db:"auth_invalidated_at" json:"authInvalidatedAt"`
-	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"createdAt"`
-	UpdatedAt         pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
-}
-
-type Scope struct {
+type TeamMembership struct {
 	ID        uuid.UUID          `db:"id" json:"id"`
 	Pid       string             `db:"pid" json:"pid"`
-	Kind      ScopeKind          `db:"kind" json:"kind"`
-	ParentID  uuid.NullUUID      `db:"parent_id" json:"parentId"`
+	TeamID    uuid.UUID          `db:"team_id" json:"teamId"`
+	UserID    uuid.UUID          `db:"user_id" json:"userId"`
 	CreatedAt pgtype.Timestamptz `db:"created_at" json:"createdAt"`
 	UpdatedAt pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
 }
 
-type Team struct {
-	ID           uuid.UUID          `db:"id" json:"id"`
-	Pid          string             `db:"pid" json:"pid"`
-	ScopeID      uuid.UUID          `db:"scope_id" json:"scopeId"`
-	OrgID        uuid.UUID          `db:"org_id" json:"orgId"`
-	ParentTeamID uuid.NullUUID      `db:"parent_team_id" json:"parentTeamId"`
-	Name         string             `db:"name" json:"name"`
-	Slug         string             `db:"slug" json:"slug"`
-	CreatedAt    pgtype.Timestamptz `db:"created_at" json:"createdAt"`
-	UpdatedAt    pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
-}
-
 type User struct {
-	ID          uuid.UUID          `db:"id" json:"id"`
-	Pid         string             `db:"pid" json:"pid"`
-	PrincipalID uuid.UUID          `db:"principal_id" json:"principalId"`
-	Email       string             `db:"email" json:"email"`
-	Name        string             `db:"name" json:"name"`
-	IsStaff     bool               `db:"is_staff" json:"isStaff"`
-	CreatedAt   pgtype.Timestamptz `db:"created_at" json:"createdAt"`
-	UpdatedAt   pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
+	ID                uuid.UUID          `db:"id" json:"id"`
+	Pid               string             `db:"pid" json:"pid"`
+	Email             string             `db:"email" json:"email"`
+	Name              string             `db:"name" json:"name"`
+	Role              UserRole           `db:"role" json:"role"`
+	PasswordHash      *string            `db:"password_hash" json:"passwordHash"`
+	PasswordUpdatedAt pgtype.Timestamptz `db:"password_updated_at" json:"passwordUpdatedAt"`
+	DisabledAt        pgtype.Timestamptz `db:"disabled_at" json:"disabledAt"`
+	AuthInvalidatedAt pgtype.Timestamptz `db:"auth_invalidated_at" json:"authInvalidatedAt"`
+	CreatedAt         pgtype.Timestamptz `db:"created_at" json:"createdAt"`
+	UpdatedAt         pgtype.Timestamptz `db:"updated_at" json:"updatedAt"`
 }
