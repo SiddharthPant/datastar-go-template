@@ -62,7 +62,7 @@ router/                # HTTP route assembly and static asset wiring
 web/resources/         # Static assets, embedded in prod and direct-served in dev
 
 compose.yml            # Local Postgres, NATS, Mailpit, RustFS, observability
-Taskfile.yml           # Common development commands
+mise.toml              # Pinned tool versions, env loading, dev tasks
 sqlc.yml               # sqlc configuration
 ```
 
@@ -70,15 +70,21 @@ sqlc.yml               # sqlc configuration
 
 Prerequisites:
 
-- Go 1.26+
+- [mise](https://mise.jdx.dev) (manages Go and all dev tooling)
 - Docker with Compose
-- Task
 
-Create your local environment file:
+Trust the project config and install the toolchain — this brings in Go plus
+templ, sqlc, goose, air, dlv, goimports, golangci-lint, and the NATS CLI at
+their pinned versions:
 
 ```sh
-cp .env.example .env
+mise trust
+mise install
 ```
+
+Environment variables live in the committed `.env`, which mise loads
+automatically for your shell and for every task. Put per-machine overrides in
+`.env.local` (gitignored); it takes precedence over `.env`.
 
 Start the core local infrastructure:
 
@@ -86,17 +92,35 @@ Start the core local infrastructure:
 docker compose up -d postgres nats mailpit rustfs
 ```
 
-Apply database migrations:
+Apply database migrations and seed local data:
 
 ```sh
-task db:migrate
+mise run db:migrate
+mise run db:seed
 ```
 
 Run the web app in development mode:
 
 ```sh
-task dev
+mise run dev
 ```
+
+templ and sqlc output also regenerates automatically: mise `watch_files` hooks
+run `templ:generate` and `sqlc:generate` whenever `.templ` files or SQL queries
+change.
+
+### Version control with jj (optional)
+
+This is a standard git repository. If you use [jj](https://jj-vcs.github.io/jj/),
+install it globally (it is not part of the project toolchain) and set up a
+colocated repo:
+
+```sh
+jj git init --colocate
+```
+
+git and jj then operate on the same history: jj syncs with `.git` on every
+command, so plain git, IDE integrations, and `gh` keep working alongside jj.
 
 The application defaults to `http://localhost:8080`.
 
@@ -122,19 +146,27 @@ or the observability port mapping in `compose.yml`.
 ## Common Commands
 
 ```sh
-task dev            # Run the web server with dev build tags
-task run            # Run the web server with prod-style build tags
-task gen            # Regenerate sqlc and templ output
-task templ          # Regenerate templ output
-task templ:watch    # Watch .templ files and regenerate on change
-task sqlc:generate  # Regenerate database/sqlc
-task sqlc:vet       # Vet sqlc queries
-task sqlc:diff      # Check generated sqlc output for drift
-task db:migrate     # Apply migrations
-task db:rollback    # Roll back the last migration
-task db:status      # Show migration status
-task db:new -- name # Create a new SQL migration
+mise run dev             # Run the web server with dev build tags
+mise run run             # Run the web server with prod-style build tags
+mise run live            # Hot reload: air + templ watch together
+mise run genall          # Regenerate sqlc and templ output
+mise run templ:generate  # Regenerate templ output
+mise run sqlc:generate   # Regenerate database/sqlc
+mise run sqlc:vet        # Vet sqlc queries
+mise run sqlc:diff       # Check generated sqlc output for drift
+mise run db:migrate      # Apply migrations
+mise run db:rollback     # Roll back the last migration
+mise run db:status       # Show migration status
+mise run db:new name     # Create a new SQL migration
+mise run db:seed         # Seed local org/team/user data
+mise run db:reset        # Drop, recreate, migrate, and seed (asks first)
+mise run fmt             # Format code and imports
+mise run lint            # Run golangci-lint
+mise run test            # Run tests
 ```
+
+`mise tasks` lists every task; `mise run` with no arguments opens an
+interactive picker.
 
 There is also an embedded migration runner:
 
@@ -199,9 +231,10 @@ about, easy to replace in pieces, and hard to accidentally turn into a tangle.
 
 ## Configuration
 
-Configuration currently loads `.env` on startup and then reads environment
-variables with local-friendly defaults. Keep a `.env` file present for local
-runs.
+The application reads configuration from environment variables with
+local-friendly defaults. Locally, mise loads `.env` (committed defaults) and
+`.env.local` (personal overrides) into the environment; the app itself does no
+dotenv loading.
 
 Important variables include:
 
@@ -216,7 +249,7 @@ Important variables include:
 - `NATS_NAME`
 - `NATS_CONNECT_TIMEOUT`
 
-See `.env.example` for the current local defaults.
+See `.env` for the current local defaults.
 
 ## Production Notes
 
