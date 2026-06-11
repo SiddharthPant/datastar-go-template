@@ -1,0 +1,139 @@
+[tools]
+go = "1.26.4"
+"go:github.com/a-h/templ/cmd/templ" = "0.3.1020"
+"go:github.com/air-verse/air" = "1.65.3"
+"go:github.com/go-delve/delve/cmd/dlv" = "1.26.3"
+"go:github.com/golangci/golangci-lint/v2/cmd/golangci-lint" = "2.12.2"
+"go:github.com/nats-io/natscli/nats" = "0.4.0"
+"go:github.com/pressly/goose/v3/cmd/goose" = "3.27.1"
+"go:github.com/sqlc-dev/sqlc/cmd/sqlc" = "1.31.1"
+"go:golang.org/x/tools/cmd/goimports" = "0.46.0"
+
+[env]
+_.file = [".env", ".env.local"]
+
+[[watch_files]]
+patterns = ["**/*.templ"]
+task = "templ:generate"
+
+[[watch_files]]
+patterns = ["sqlc.yml", "database/queries/**/*.sql"]
+task = "sqlc:generate"
+
+[tasks]
+
+[tasks."templ:generate"]
+description = "Generate Go code from components/*.templ files"
+run = "templ generate"
+# Watch mode can also be called directly with `mise watch -t templ:generate`
+sources = ["**/*.templ"]
+outputs = ["**/*_templ.go"]
+
+[tasks."sqlc:generate"]
+description = "Compile SQL queries into type-safe Go code"
+run = "sqlc generate"
+sources = ["sqlc.yml", "database/queries/**/*.sql"]
+outputs = ["database/sqlc/**/*.go"]
+
+[tasks.fmt]
+description = "Format code and imports"
+run = [
+  "go fmt",
+  "find . -name '*.go' -not -name '*_templ.go' -not -path './database/sqlc/*' -exec goimports -w {} +",
+]
+
+[tasks.lint]
+description = "Run golangci-lint over the whole module"
+run = "golangci-lint run"
+
+[tasks.dev]
+description = "Run the web server with local build tag + hot reload"
+depends = ["templ:generate"]
+run = "go run -tags local ./cmd/web"
+
+[tasks.run]
+description = "Run the web server (server build)"
+depends = ["templ:generate"]
+run = "go run ./cmd/web"
+
+[tasks.build]
+description = "Build the web server binary"
+run = "go build -o bin/main ./cmd/web"
+
+[tasks.debug]
+description = "Debug the web server"
+depends = ["build"]
+run = "dlv exec ./bin/main"
+
+[tasks."templ:watch"]
+description = "Watch .templ files and regenerate on change"
+run = "templ generate --watch"
+
+[tasks."live:server"]
+description = "Run the web server with hot reload"
+run = """
+air \
+-build.cmd "go build -tags=dev -o tmp/main ./cmd/web" \
+-build.exclude_dir "data,node_modules" \
+-build.include_ext "go,templ" \
+-misc.clean_on_exit true
+"""
+
+[tasks.live]
+description = "Run the web server with hot reload and templ generation"
+depends = ["templ:watch", "live:server"]
+
+[tasks.genall]
+description = "Run all code generation (sqlc + templ)"
+depends = ["sqlc:generate", "templ:generate"]
+
+[tasks."sqlc:vet"]
+description = "Lint + prepare-check every query against the managed PG"
+run = "sqlc vet"
+
+[tasks."sqlc:diff"]
+description = "Fail if committed database/sqlc is stale vs. queries"
+run = "sqlc diff"
+
+[tasks."db:status"]
+description = "Check the status of database migrations"
+run = "goose -dir database/migrations postgres \"$DATABASE_URL\" status"
+
+[tasks."db:migrate"]
+description = "Run all pending database migrations up"
+run = "goose -dir database/migrations postgres \"$DATABASE_URL\" up"
+
+[tasks."db:rollback"]
+description = "Roll back the last migration"
+run = "goose -dir database/migrations postgres \"$DATABASE_URL\" down"
+
+[tasks."db:new"]
+description = "Scaffold a migration: mise run db:new add_posts"
+run = 'goose -dir database/migrations create {{arg(name="name")}} sql'
+
+[tasks."db:seed"]
+description = "Seed local org/team/user data"
+run = "go run ./cmd/seed"
+
+[tasks."db:reset"]
+description = "Drop, recreate, migrate, and seed the local DATABASE_URL"
+confirm = "This will destroy all data in {{env.POSTGRES_DB}}. Continue?"
+run = [
+  'psql "$SQLC_DATABASE_URL" -c "DROP DATABASE IF EXISTS \"$POSTGRES_DB\" WITH (FORCE)"',
+  'psql "$SQLC_DATABASE_URL" -c "CREATE DATABASE \"$POSTGRES_DB\""',
+  "mise run db:migrate",
+  "mise run db:seed",
+]
+
+[tasks."db:nuke"]
+description = "Nuke DB container itself and start with a clean slate"
+confirm = "This will nuke the DB instance and all data in {{env.POSTGRES_DB}}. Continue?"
+run = [
+  "docker compose down -v && docker compose up -d postgres --wait",
+  "mise run db:migrate",
+  "mise run db:seed",
+]
+
+[tasks.test]
+description = "Run tests"
+run = "go test ./..."

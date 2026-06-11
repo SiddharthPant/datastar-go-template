@@ -191,6 +191,8 @@ Temporary Items
 
 # End of https://www.toptal.com/developers/gitignore/api/go,visualstudiocode,goland,macos
 
-.env
+.env.local
 tmp/
 .task/
+mise.local.toml
+bin/
