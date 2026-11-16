@@ -109,19 +109,6 @@ templ and sqlc output also regenerates automatically: mise `watch_files` hooks
 run `templ:generate` and `sqlc:generate` whenever `.templ` files or SQL queries
 change.
 
-### Version control with jj (optional)
-
-This is a standard git repository. If you use [jj](https://jj-vcs.github.io/jj/),
-install it globally (it is not part of the project toolchain) and set up a
-colocated repo:
-
-```sh
-jj git init --colocate
-```
-
-git and jj then operate on the same history: jj syncs with `.git` on every
-command, so plain git, IDE integrations, and `gh` keep working alongside jj.
-
 The application defaults to `http://localhost:8080`.
 
 Useful local service ports:
