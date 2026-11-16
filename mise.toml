@@ -10,7 +10,7 @@ go = "1.26.4"
 "go:golang.org/x/tools/cmd/goimports" = "0.46.0"
 
 [env]
-_.file = [".env", ".env.local"]
+_.file = [".env"]
 
 [[watch_files]]
 patterns = ["**/*.templ"]

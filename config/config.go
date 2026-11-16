@@ -7,12 +7,13 @@ import (
 )
 
 type Config struct {
-	AppEnv       AppEnv
-	Host         string
-	Port         string
-	LogLevel     slog.Level
-	AppBaseURL   string
-	SeedPassword string
+	AppEnv            AppEnv
+	Host              string
+	Port              string
+	LogLevel          slog.Level
+	AppBaseURL        string
+	SeedPassword      string
+	MinPasswordLength int
 
 	DatabaseURL      string
 	DBMaxConns       int
@@ -41,12 +42,13 @@ func init() {
 
 func load() *Config {
 	config := &Config{
-		AppEnv:       GetAppEnv("APP_ENV"),
-		Host:         GetString("HOST"),
-		Port:         GetString("PORT"),
-		LogLevel:     GetSlogLevel("LOG_LEVEL"),
-		AppBaseURL:   GetString("APP_BASE_URL"),
-		SeedPassword: GetString("SEED_PASSWORD"),
+		AppEnv:            GetAppEnv("APP_ENV"),
+		Host:              GetString("APP_HOST"),
+		Port:              GetString("APP_PORT"),
+		LogLevel:          GetSlogLevel("LOG_LEVEL"),
+		AppBaseURL:        GetString("APP_BASE_URL"),
+		SeedPassword:      GetString("APP_SEED_PASSWORD"),
+		MinPasswordLength: GetInt("APP_MIN_PASSWORD_LENGTH"),
 
 		DatabaseURL:        GetString("DATABASE_URL"),
 		DBMaxConns:         GetInt("DATABASE_MAX_CONNECTIONS"),
